@@ -1,0 +1,39 @@
+{
+  "name": "tdb-sante-api",
+  "version": "1.0.0",
+  "description": "API Node.js/Express + TypeORM/PostgreSQL pour le tableau de bord Branche Santé",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "ts-node-dev --respawn src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "typeorm": "typeorm-ts-node-commonjs",
+    "migration:run": "npm run typeorm -- migration:run -d src/data-source.ts",
+    "migration:revert": "npm run typeorm -- migration:revert -d src/data-source.ts",
+    "refresh:mv": "psql \"$DATABASE_URL\" -c \"REFRESH MATERIALIZED VIEW mv_sp_portefeuille;\"",
+    "etl:daily": "ts-node src/etl/jobs/daily.job.ts",
+    "etl:monthly": "ts-node src/etl/jobs/monthly.job.ts",
+    "etl:quarterly": "ts-node src/etl/jobs/quarterly.job.ts",
+    "etl:scheduler": "ts-node src/etl/scheduler.ts"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "node-cron": "^3.0.3",
+    "oracledb": "^6.7.0",
+    "pg": "^8.12.0",
+    "reflect-metadata": "^0.2.2",
+    "typeorm": "^0.3.20"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.14.0",
+    "@types/node-cron": "^3.0.11",
+    "@types/oracledb": "^6.5.2",
+    "ts-node": "^10.9.2",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.5.0"
+  }
+}
