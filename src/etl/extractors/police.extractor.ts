@@ -3,6 +3,7 @@ import { querySource } from '../config/source-pool';
 export interface PoliceSource {
   numero_police: string;
   souscripteur: string;
+  statut_souscripteur: string;
   statut_police: string;
   prime_annuelle: number;
   date_effet: Date;
@@ -21,14 +22,15 @@ export interface PoliceSource {
 // échéance dépassée de plus de 90j -> clôturée (règle §6.1), échéance
 // dépassée -> échue, sinon active. Hypothèse sur flagannu à confirmer.
 //
-// statut_souscripteur (Étatique / Non-Étatique) : AUCUNE colonne source
-// identifiée sur POLICE ni ASSURE — non extrait, laissé à NON_ETATIQUE par
-// défaut côté transformer. Cf. liste des ambiguïtés.
+// statut_souscripteur (Étatique / Non-Étatique) : ASSURE.codequal = 73 ->
+// étatique, sinon non-étatique (confirmé sur le portefeuille Santé réel :
+// 35 étatiques / 2342 non-étatiques).
 export async function extractPolices(since: Date): Promise<PoliceSource[]> {
   const { rows } = await querySource<PoliceSource>(
     `SELECT
        TO_CHAR(p.numepoli) AS "numero_police",
        a.raissoci || CASE WHEN a.prenassu IS NOT NULL THEN ' ' || a.prenassu END AS "souscripteur",
+       CASE WHEN a.codequal = 73 THEN 'ETATIQUE' ELSE 'NON_ETATIQUE' END AS "statut_souscripteur",
        CASE
          WHEN p.flagannu = 'O' THEN 'RESILIEE'
          WHEN SYSDATE > p.dateeche + 90 THEN 'CLOTUREE'

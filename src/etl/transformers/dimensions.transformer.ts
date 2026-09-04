@@ -39,9 +39,10 @@ export function transformPolice(source: PoliceSource) {
   return {
     numeroPolice: source.numero_police,
     souscripteur: source.souscripteur,
-    // Non résolu en source (aucune colonne identifiée sur POLICE/ASSURE) —
-    // défaut non-étatique en attendant clarification, cf. ambiguïtés.
-    statutSouscripteur: StatutSouscripteur.NON_ETATIQUE,
+    statutSouscripteur:
+      source.statut_souscripteur === 'ETATIQUE'
+        ? StatutSouscripteur.ETATIQUE
+        : StatutSouscripteur.NON_ETATIQUE,
     statutPolice:
       StatutPolice[source.statut_police as keyof typeof StatutPolice] ?? StatutPolice.ACTIVE,
     primeAnnuelle: Number(source.prime_annuelle),
