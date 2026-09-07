@@ -1,8 +1,10 @@
 import { TypeCanal } from '../../entities/canal.entity';
+import { TypeApporteur } from '../../entities/apporteur.entity';
 import { StatutSouscripteur, StatutPolice } from '../../entities/police.entity';
 import { TypeAssure } from '../../entities/assure.entity';
 import { CategoriePrestataire } from '../../entities/prestataire.entity';
 import { CanalSource } from '../extractors/canal.extractor';
+import { ApporteurSource } from '../extractors/apporteur.extractor';
 import { PoliceSource } from '../extractors/police.extractor';
 
 // Calcule la tranche de prime — logique reprise du cahier §3.4.
@@ -25,12 +27,32 @@ const MAPPING_TYPE_CANAL: Record<string, TypeCanal> = {
   Courtier: TypeCanal.COURTIER_NON_GESTIONNAIRE,
   'Bancassurance - MicroFinance': TypeCanal.BANCASSURANCE,
   'Agent Général': TypeCanal.COORDINATION_AGENCES,
+  // Polices gérées directement par la compagnie, sans intermédiaire tiers
+  // (7 polices sur le portefeuille Santé) — pas d'équivalent dans le
+  // cahier, rattachées à Bureau Direct par défaut.
+  Compagnie: TypeCanal.BUREAU_DIRECT,
 };
 
 export function transformCanal(source: CanalSource) {
   return {
     nom: source.libelle,
     typeCanal: MAPPING_TYPE_CANAL[source.type_intermediaire] ?? TypeCanal.BUREAU_DIRECT,
+    codeSource: source.code,
+  };
+}
+
+// APPORTEUR.codtypap (confirmé via TYPE_APPORTEUR, 3 valeurs) : A = agréé,
+// D = affaire directe, L = libre.
+const MAPPING_TYPE_APPORTEUR: Record<string, TypeApporteur> = {
+  A: TypeApporteur.AGREE,
+  D: TypeApporteur.AFFAIRE_DIRECTE,
+  L: TypeApporteur.LIBRE,
+};
+
+export function transformApporteur(source: ApporteurSource) {
+  return {
+    nom: source.nom,
+    typeApporteur: MAPPING_TYPE_APPORTEUR[source.type_apporteur] ?? TypeApporteur.AGREE,
     codeSource: source.code,
   };
 }
@@ -50,6 +72,7 @@ export function transformPolice(source: PoliceSource) {
     dateEcheance: source.date_echeance,
     tranchePrime: calculerTranchePrime(Number(source.prime_annuelle)),
     codeApporteur: source.code_apporteur,
+    codeApporteurCommercial: source.code_apporteur_commercial,
   };
 }
 
@@ -57,12 +80,31 @@ export function transformTypeAssure(source: string): TypeAssure {
   return source === 'ENFANT' ? TypeAssure.ENFANT : TypeAssure.ADULTE;
 }
 
-// Source = BENEFICIAIRE.codtypbe (codes ORASS bruts : Q, P, C, H, O, J, L,
-// M, T, X, W, K, 0). Aucune table de décodage trouvée dans le schéma — le
-// mapping ci-dessous est VIDE tant que la signification de ces codes n'est
-// pas confirmée ; tout code retombe sur CABINET_MEDICAL par défaut.
-// Cf. liste des ambiguïtés transmise.
+// Source = BENEFICIAIRE.codnatpr (prestataires filtrés sur codnatbe = 'P',
+// confirmé = "Prestataire Maladie" via NATURE_BENEFICIAIRE). Aucune table de
+// décodage pour codnatpr, mais les codes sont explicites au vu des libellés
+// réels :
+// - PH = Pharmacie, OP = Optique, DE = Dentaire, LB = Laboratoire (fiables)
+// - LR = Imagerie/Radiologie (vérifié : "Centre de Radiologie", "Centre
+//   d'Imagerie Médicale", "Centre de Radiographie/Échographie")
+// - SB = Centre de santé (soins), confirmé par le métier — bucket qui
+//   mélange hôpitaux/cliniques/cabinets sans distinction public/privé
+//   possible en l'état (pas de flag en source) : catégorie dédiée
+//   CENTRE_DE_SANTE plutôt qu'un rattachement arbitraire à Hôpital ou
+//   Clinique.
+// - RE = Cabinets de kinésithérapie/rééducation (vérifié : "CABINET DE
+//   KINESITHERAPIE ...") — catégorie dédiée CABINET_KINESITHERAPIE (pas
+//   listée telle quelle dans le cahier, mais distincte du cabinet médical
+//   générique).
 export function transformCategoriePrestataire(source: string): CategoriePrestataire {
-  const mapping: Record<string, CategoriePrestataire> = {};
+  const mapping: Record<string, CategoriePrestataire> = {
+    PH: CategoriePrestataire.PHARMACIE,
+    OP: CategoriePrestataire.CENTRE_OPTIQUE,
+    DE: CategoriePrestataire.CABINET_DENTAIRE,
+    LB: CategoriePrestataire.LABORATOIRE,
+    LR: CategoriePrestataire.CENTRE_IMAGERIE,
+    SB: CategoriePrestataire.CENTRE_DE_SANTE,
+    RE: CategoriePrestataire.CABINET_KINESITHERAPIE,
+  };
   return mapping[source?.trim().toUpperCase()] ?? CategoriePrestataire.CABINET_MEDICAL;
 }

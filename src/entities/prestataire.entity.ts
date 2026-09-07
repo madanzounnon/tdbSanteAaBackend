@@ -12,6 +12,8 @@ export enum CategoriePrestataire {
   CABINET_DENTAIRE = 'cabinet_dentaire',
   MATERNITE = 'maternite',
   CENTRE_IMAGERIE = 'centre_imagerie',
+  CENTRE_DE_SANTE = 'centre_de_sante',
+  CABINET_KINESITHERAPIE = 'cabinet_kinesitherapie',
 }
 
 @Entity('dim_prestataire')

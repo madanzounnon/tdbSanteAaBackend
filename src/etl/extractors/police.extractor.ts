@@ -9,6 +9,7 @@ export interface PoliceSource {
   date_effet: Date;
   date_echeance: Date;
   code_apporteur: string;
+  code_apporteur_commercial: string | null;
   maj_le: Date;
 }
 
@@ -18,6 +19,12 @@ export interface PoliceSource {
 // (GARANTIE_ACCORDEE.montgara), l'alternative POLICE.mont__ca/monaccpo
 // n'étant pas confirmée comme équivalente — cf. ambiguïtés.
 //
+// numero_police = codeinte-numepoli (clé composite) : NUMEPOLI seul n'est
+// PAS unique globalement, il est réutilisé par des dizaines d'intermédiaires
+// différents (vérifié : la police "10000001" existe sous 10 codeinte
+// distincts). code_apporteur = p.codeinte directement (fiable, 0% de NULL
+// sur le portefeuille Santé) — remplace POLICE.codeappo qui l'est à 86%.
+//
 // statut_police dérivé faute de colonne dédiée : flagannu = 'O' -> résiliée,
 // échéance dépassée de plus de 90j -> clôturée (règle §6.1), échéance
 // dépassée -> échue, sinon active. Hypothèse sur flagannu à confirmer.
@@ -25,10 +32,16 @@ export interface PoliceSource {
 // statut_souscripteur (Étatique / Non-Étatique) : ASSURE.codequal = 73 ->
 // étatique, sinon non-étatique (confirmé sur le portefeuille Santé réel :
 // 35 étatiques / 2342 non-étatiques).
+//
+// code_apporteur_commercial (vendeur individuel, dim_apporteur) vient de
+// APPORTEUR_CONTRAT.codappin — couverture partielle (~33% sur le
+// portefeuille Santé, NULL sinon). Sous-requête MIN(...) pour éviter la
+// multiplication de lignes : APPORTEUR_CONTRAT porte plusieurs lignes par
+// contrat (une par garantie/CODEGARA), avec en général le même apporteur.
 export async function extractPolices(since: Date): Promise<PoliceSource[]> {
   const { rows } = await querySource<PoliceSource>(
     `SELECT
-       TO_CHAR(p.numepoli) AS "numero_police",
+       TO_CHAR(p.codeinte) || '-' || TO_CHAR(p.numepoli) AS "numero_police",
        a.raissoci || CASE WHEN a.prenassu IS NOT NULL THEN ' ' || a.prenassu END AS "souscripteur",
        CASE WHEN a.codequal = 73 THEN 'ETATIQUE' ELSE 'NON_ETATIQUE' END AS "statut_souscripteur",
        CASE
@@ -40,7 +53,13 @@ export async function extractPolices(since: Date): Promise<PoliceSource[]> {
        NVL(g.prime_annuelle, 0) AS "prime_annuelle",
        p.dateeffe AS "date_effet",
        p.dateeche AS "date_echeance",
-       TO_CHAR(p.codeappo) AS "code_apporteur",
+       TO_CHAR(p.codeinte) AS "code_apporteur",
+       TO_CHAR((
+         SELECT MIN(ac.codappin)
+         FROM apporteur_contrat ac
+         WHERE ac.codeinte = p.codeinte AND ac.numepoli = p.numepoli AND ac.avenmodi = p.avenmodi
+           AND ac.codappin IS NOT NULL
+       )) AS "code_apporteur_commercial",
        p.modi__le AS "maj_le"
      FROM police p
      JOIN categorie c ON c.codecate = p.codecate AND c.codebran = 10

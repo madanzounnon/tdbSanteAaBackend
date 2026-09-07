@@ -2,6 +2,7 @@ import {
   Entity, PrimaryGeneratedColumn, Column, ManyToOne, OneToMany, JoinColumn,
 } from 'typeorm';
 import { Canal } from './canal.entity';
+import { Apporteur } from './apporteur.entity';
 import { Assure } from './assure.entity';
 import { FaitPrime } from './fait-prime.entity';
 import { FaitSinistre } from './fait-sinistre.entity';
@@ -56,6 +57,11 @@ export class Police {
   @ManyToOne(() => Canal, (canal) => canal.polices)
   @JoinColumn({ name: 'canal_id' })
   canal: Canal;
+
+  // Commercial individuel ayant vendu la police — nullable, cf. Apporteur.
+  @ManyToOne(() => Apporteur, (apporteur) => apporteur.polices, { nullable: true })
+  @JoinColumn({ name: 'apporteur_id' })
+  apporteur: Apporteur | null;
 
   @OneToMany(() => Assure, (assure) => assure.police)
   assures: Assure[];

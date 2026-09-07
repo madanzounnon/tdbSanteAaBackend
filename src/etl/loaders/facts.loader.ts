@@ -24,23 +24,18 @@ export async function loadPrimes(sources: PrimeSource[]): Promise<number> {
       continue;
     }
 
-    const exercice = extraireExercice(source.date_emission);
-    const mois = extraireMois(source.date_emission);
-
-    // Upsert sur (police, exercice, mois) : une émission peut être révisée
-    // (avenant en cours de mois) avant d'être définitivement close.
-    let fait = await repo
-      .createQueryBuilder('f')
-      .where('f.police_id = :policeId', { policeId })
-      .andWhere('f.exercice = :exercice', { exercice })
-      .andWhere('f.mois = :mois', { mois })
-      .getOne();
+    // Upsert sur numero_quittance (clé naturelle, une ligne par mouvement) :
+    // une même quittance peut être réextraite (avenant révisé) sans dupliquer
+    // la ligne, mais deux quittances distinctes du même mois restent deux
+    // lignes distinctes (cf. entité).
+    let fait = await repo.findOneBy({ numeroQuittance: source.numero_quittance });
 
     if (!fait) {
       fait = repo.create();
+      fait.numeroQuittance = source.numero_quittance;
       fait.police = { id: policeId } as Police;
-      fait.exercice = exercice;
-      fait.mois = mois;
+      fait.exercice = extraireExercice(source.date_emission);
+      fait.mois = extraireMois(source.date_emission);
       fait.date = source.date_emission;
     }
     fait.typeSouscription = transformTypeSouscription(source.type_souscription);
@@ -69,13 +64,15 @@ export async function loadSinistres(sources: SinistreSource[]): Promise<number> 
     // stade (cf. ambiguïtés dim_assure) — défaut ADULTE en attendant.
     const assure = await findOrCreateAssure(policeId, source.code_assure, TypeAssure.ADULTE, 0);
     const acte = await findOrCreateActeMedical(transformNatureActe(source.famille_prestation));
-    const prestataire = await findOrCreatePrestataire(source.nom_prestataire, source.code_prestataire);
+    const prestataire = source.nom_prestataire
+      ? await findOrCreatePrestataire(source.nom_prestataire, source.code_categorie_prestataire ?? '')
+      : null;
 
     const fait = repo.create({
       police: { id: policeId } as Police,
       assure: { id: assure.id },
       acteMedical: { id: acte.id },
-      prestataire: { id: prestataire.id },
+      prestataire: prestataire ? { id: prestataire.id } : null,
       date: source.date_reglement,
       exercice: extraireExercice(source.date_reglement),
       mois: extraireMois(source.date_reglement),

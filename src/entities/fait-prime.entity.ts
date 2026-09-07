@@ -6,11 +6,19 @@ export enum TypeSouscription {
   RENOUVELLEMENT = 'renouvellement',
 }
 
+// Granularité = une ligne par quittance (numero_quittance = clé naturelle
+// source, codeinte-numequit). PAS d'agrégat par police/mois : une police
+// peut avoir plusieurs quittances le même mois (incorporation +
+// modification, etc.) — chacune reste distincte pour que la somme sur une
+// période donne la vraie prime nette de la police.
 @Entity('fait_prime')
 @Index(['exercice', 'mois'])
 export class FaitPrime {
   @PrimaryGeneratedColumn('uuid')
   id: string;
+
+  @Column({ name: 'numero_quittance', length: 50, unique: true })
+  numeroQuittance: string;
 
   @ManyToOne(() => Police, (police) => police.primes)
   @JoinColumn({ name: 'police_id' })

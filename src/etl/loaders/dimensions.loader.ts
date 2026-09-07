@@ -1,12 +1,14 @@
 import { AppDataSource } from '../../data-source';
 import { Canal } from '../../entities/canal.entity';
+import { Apporteur } from '../../entities/apporteur.entity';
 import { Police } from '../../entities/police.entity';
 import { Prestataire } from '../../entities/prestataire.entity';
 import { ActeMedical, NatureActe } from '../../entities/acte-medical.entity';
 import { Assure } from '../../entities/assure.entity';
 import { CanalSource } from '../extractors/canal.extractor';
+import { ApporteurSource } from '../extractors/apporteur.extractor';
 import { PoliceSource } from '../extractors/police.extractor';
-import { transformCanal, transformPolice, transformCategoriePrestataire } from '../transformers/dimensions.transformer';
+import { transformCanal, transformApporteur, transformPolice, transformCategoriePrestataire } from '../transformers/dimensions.transformer';
 
 // Toutes les dimensions sont chargées en SCD1 (écrasement simple) :
 // on privilégie la valeur la plus récente, sans conserver l'historique
@@ -14,6 +16,7 @@ import { transformCanal, transformPolice, transformCategoriePrestataire } from '
 // retracer l'historique tarifaire d'une police avenant par avenant.
 
 const canauxCache = new Map<string, Canal>();
+const apporteursCache = new Map<string, Apporteur>();
 
 export async function loadCanaux(sources: CanalSource[]): Promise<number> {
   const repo = AppDataSource.getRepository(Canal);
@@ -28,6 +31,24 @@ export async function loadCanaux(sources: CanalSource[]): Promise<number> {
     }
     canal = await repo.save(canal);
     canauxCache.set(data.codeSource, canal);
+    loaded++;
+  }
+  return loaded;
+}
+
+export async function loadApporteurs(sources: ApporteurSource[]): Promise<number> {
+  const repo = AppDataSource.getRepository(Apporteur);
+  let loaded = 0;
+  for (const source of sources) {
+    const data = transformApporteur(source);
+    let apporteur = await repo.findOneBy({ nom: data.nom });
+    if (!apporteur) {
+      apporteur = repo.create({ nom: data.nom, typeApporteur: data.typeApporteur });
+    } else {
+      apporteur.typeApporteur = data.typeApporteur;
+    }
+    apporteur = await repo.save(apporteur);
+    apporteursCache.set(data.codeSource, apporteur);
     loaded++;
   }
   return loaded;
@@ -57,6 +78,11 @@ export async function loadPolices(sources: PoliceSource[]): Promise<number> {
     police.dateEcheance = data.dateEcheance;
     police.tranchePrime = data.tranchePrime;
     police.canal = canal;
+    // Apporteur commercial non garanti en source (~33% de couverture) —
+    // on ne bloque pas le chargement de la police en son absence.
+    police.apporteur = data.codeApporteurCommercial
+      ? apporteursCache.get(data.codeApporteurCommercial) ?? null
+      : null;
 
     await repo.save(police);
     loaded++;

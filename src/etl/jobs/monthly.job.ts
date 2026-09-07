@@ -2,10 +2,11 @@ import { AppDataSource } from '../../data-source';
 import { EtlLogger } from '../utils/logger';
 import { getWatermark } from '../utils/watermark';
 import { extractCanaux } from '../extractors/canal.extractor';
+import { extractApporteurs } from '../extractors/apporteur.extractor';
 import { extractPolices } from '../extractors/police.extractor';
 import { extractPrimes } from '../extractors/prime.extractor';
 import { extractSinistres } from '../extractors/sinistre.extractor';
-import { loadCanaux, loadPolices } from '../loaders/dimensions.loader';
+import { loadCanaux, loadApporteurs, loadPolices } from '../loaders/dimensions.loader';
 import { loadPrimes, loadSinistres } from '../loaders/facts.loader';
 
 const JOB_NAME = 'monthly_ca_sinistralite';
@@ -22,6 +23,9 @@ export async function runMonthlyJob(): Promise<void> {
 
     const canaux = await extractCanaux();
     await loadCanaux(canaux);
+
+    const apporteurs = await extractApporteurs();
+    await loadApporteurs(apporteurs);
 
     const polices = await extractPolices(since);
     const policesLoaded = await loadPolices(polices);

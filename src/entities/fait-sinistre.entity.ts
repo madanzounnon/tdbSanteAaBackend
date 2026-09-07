@@ -22,9 +22,11 @@ export class FaitSinistre {
   @JoinColumn({ name: 'acte_medical_id' })
   acteMedical: ActeMedical;
 
-  @ManyToOne(() => Prestataire, (prestataire) => prestataire.sinistres)
+  // Nullable : le rattachement BENEFICIAIRE (codnatbe='P') n'est pas garanti
+  // sur 100% des lignes source.
+  @ManyToOne(() => Prestataire, (prestataire) => prestataire.sinistres, { nullable: true })
   @JoinColumn({ name: 'prestataire_id' })
-  prestataire: Prestataire;
+  prestataire: Prestataire | null;
 
   @Column({ type: 'date' })
   date: Date;

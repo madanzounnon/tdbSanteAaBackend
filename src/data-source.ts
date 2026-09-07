@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
 import { Canal } from './entities/canal.entity';
+import { Apporteur } from './entities/apporteur.entity';
 import { Police } from './entities/police.entity';
 import { Assure } from './entities/assure.entity';
 import { Prestataire } from './entities/prestataire.entity';
@@ -24,6 +25,7 @@ export const AppDataSource = new DataSource({
   logging: process.env.NODE_ENV === 'development',
   entities: [
     Canal,
+    Apporteur,
     Police,
     Assure,
     Prestataire,
