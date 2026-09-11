@@ -2,16 +2,12 @@ import { AppDataSource } from '../../data-source';
 import { FaitPrime } from '../../entities/fait-prime.entity';
 import { FaitSinistre } from '../../entities/fait-sinistre.entity';
 import { FaitFacturePrestataire } from '../../entities/fait-facture-prestataire.entity';
-import { FaitRegularisation } from '../../entities/fait-regularisation.entity';
 import { Police } from '../../entities/police.entity';
-import { Canal } from '../../entities/canal.entity';
 import { PrimeSource } from '../extractors/prime.extractor';
 import { SinistreSource } from '../extractors/sinistre.extractor';
 import { FactureSource } from '../extractors/facture-prestataire.extractor';
-import { RegularisationSource } from '../extractors/regularisation.extractor';
-import { transformNatureActe, transformTypeSouscription, calculerStatutFacture, extraireExercice, extraireMois } from '../transformers/facts.transformer';
-import { TypeAssure } from '../../entities/assure.entity';
-import { getPoliceIdByNumero, findOrCreateAssure, findOrCreatePrestataire, findOrCreateActeMedical } from './dimensions.loader';
+import { transformNatureActe, transformTypeAssure, calculerStatutFacture, extraireExercice, extraireMois } from '../transformers/facts.transformer';
+import { getPoliceIdByNumero, getTypeAvenantByCode, findOrCreateAssure, findOrCreatePrestataire, findOrCreateActeMedical } from './dimensions.loader';
 
 export async function loadPrimes(sources: PrimeSource[]): Promise<number> {
   const repo = AppDataSource.getRepository(FaitPrime);
@@ -38,7 +34,8 @@ export async function loadPrimes(sources: PrimeSource[]): Promise<number> {
       fait.mois = extraireMois(source.date_emission);
       fait.date = source.date_emission;
     }
-    fait.typeSouscription = transformTypeSouscription(source.type_souscription);
+    fait.typeAvenant = getTypeAvenantByCode(source.code_type_avenant);
+    fait.dateAvenant = source.date_avenant;
     fait.montantEmis = Number(source.montant_emis);
     fait.montantEncaisse = Number(source.montant_encaisse);
     fait.commissionVersee = Number(source.commission_versee);
@@ -60,9 +57,8 @@ export async function loadSinistres(sources: SinistreSource[]): Promise<number> 
       continue;
     }
 
-    // type_assure (adulte/enfant) n'a aucune source fiable identifiée à ce
-    // stade (cf. ambiguïtés dim_assure) — défaut ADULTE en attendant.
-    const assure = await findOrCreateAssure(policeId, source.code_assure, TypeAssure.ADULTE, 0);
+    // type_assure résolu via RISQUE_FAMILLE.lienpare, cf. sinistre.extractor.ts.
+    const assure = await findOrCreateAssure(policeId, source.matricule_assure, transformTypeAssure(source.lien_parente), 0);
     const acte = await findOrCreateActeMedical(transformNatureActe(source.famille_prestation));
     const prestataire = source.nom_prestataire
       ? await findOrCreatePrestataire(source.nom_prestataire, source.code_categorie_prestataire ?? '')
@@ -111,40 +107,6 @@ export async function loadFacturesPrestataires(sources: FactureSource[]): Promis
     }
     fait.dateReglement = source.date_reglement;
     fait.statut = statut;
-
-    await repo.save(fait);
-    loaded++;
-  }
-  return loaded;
-}
-
-export async function loadRegularisations(sources: RegularisationSource[]): Promise<number> {
-  const repo = AppDataSource.getRepository(FaitRegularisation);
-  let loaded = 0;
-
-  for (const source of sources) {
-    const policeId = await getPoliceIdByNumero(source.numero_police);
-    if (!policeId) {
-      console.warn(`[ETL] Police introuvable pour la régularisation ${source.numero_police} — ligne ignorée`);
-      continue;
-    }
-
-    let fait = await repo
-      .createQueryBuilder('f')
-      .where('f.police_id = :policeId', { policeId })
-      .andWhere('f.exercice = :exercice', { exercice: source.exercice })
-      .getOne();
-
-    if (!fait) {
-      fait = repo.create();
-      fait.police = { id: policeId } as Police;
-      fait.canal = { id: source.canal_id } as Canal;
-      fait.exercice = source.exercice;
-    }
-    // montantEncaisse n'est PAS recalculé ici : c'est un fait opérationnel
-    // (encaissement réel de l'avenant), pas dérivable de fait_prime/fait_sinistre.
-    // On ne touche qu'au montant théorique à régulariser.
-    fait.montantARegulariser = Number(source.montant_a_regulariser);
 
     await repo.save(fait);
     loaded++;

@@ -3,10 +3,11 @@ import { EtlLogger } from '../utils/logger';
 import { getWatermark } from '../utils/watermark';
 import { extractCanaux } from '../extractors/canal.extractor';
 import { extractApporteurs } from '../extractors/apporteur.extractor';
+import { extractTypesAvenant } from '../extractors/type-avenant.extractor';
 import { extractPolices } from '../extractors/police.extractor';
 import { extractPrimes } from '../extractors/prime.extractor';
 import { extractSinistres } from '../extractors/sinistre.extractor';
-import { loadCanaux, loadApporteurs, loadPolices } from '../loaders/dimensions.loader';
+import { loadCanaux, loadApporteurs, loadTypesAvenant, loadPolices } from '../loaders/dimensions.loader';
 import { loadPrimes, loadSinistres } from '../loaders/facts.loader';
 
 const JOB_NAME = 'monthly_ca_sinistralite';
@@ -26,6 +27,9 @@ export async function runMonthlyJob(): Promise<void> {
 
     const apporteurs = await extractApporteurs();
     await loadApporteurs(apporteurs);
+
+    const typesAvenant = await extractTypesAvenant();
+    await loadTypesAvenant(typesAvenant);
 
     const polices = await extractPolices(since);
     const policesLoaded = await loadPolices(polices);

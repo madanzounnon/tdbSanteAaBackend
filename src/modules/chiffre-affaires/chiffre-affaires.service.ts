@@ -1,5 +1,4 @@
 import { AppDataSource } from '../../data-source';
-import { Police } from '../../entities/police.entity';
 
 export class ChiffreAffairesService {
   async getKpis(exercice: number) {
@@ -32,15 +31,52 @@ export class ChiffreAffairesService {
     );
   }
 
+  // §3.1 : Nombre de Nouvelles Affaires (NA) vs Renouvellements (REN).
+  // NA = police dont la 1ère quittance de l'exercice n'a aucun avenant
+  // (type_avenant_id IS NULL, càd numeaven était NULL en source).
+  // REN = police avec une quittance liée à dim_type_avenant.code = '1'
+  // ("Avenant de renouvellement", confirmé côté métier) — les autres
+  // avenants (incorporation, modification, retrait, ajustement...) ne
+  // comptent ni comme NA ni comme REN.
+  async getProduction(exercice: number) {
+    const [result] = await AppDataSource.query(
+      `SELECT
+         COUNT(DISTINCT CASE WHEN ta.code IS NULL THEN fp.police_id END) AS nouvelles_affaires,
+         COUNT(DISTINCT CASE WHEN ta.code = '1' THEN fp.police_id END) AS renouvellements
+       FROM fait_prime fp
+       LEFT JOIN dim_type_avenant ta ON ta.id = fp.type_avenant_id
+       WHERE fp.exercice = $1`,
+      [exercice],
+    );
+    return result;
+  }
+
+  // Tranche calculée sur la prime de l'exercice (SUM(fait_prime.montant_emis)),
+  // jamais une valeur figée sur dim_police — une police change de tranche
+  // d'un exercice à l'autre selon sa prime réelle sur la période. Seuils
+  // repris du cahier §3.4.
   async getRepartitionParTranche(exercice: number) {
-    const repo = AppDataSource.getRepository(Police);
-    return repo
-      .createQueryBuilder('police')
-      .select('police.tranchePrime', 'tranche')
-      .addSelect('COUNT(*)', 'nombre_polices')
-      .addSelect('SUM(police.primeAnnuelle)', 'primes_cumulees')
-      .where('EXTRACT(YEAR FROM police.dateEffet) = :exercice', { exercice })
-      .groupBy('police.tranchePrime')
-      .getRawMany();
+    return AppDataSource.query(
+      `SELECT tranche, COUNT(*) AS nombre_polices, SUM(prime_exercice) AS primes_cumulees
+       FROM (
+         SELECT
+           fp.police_id,
+           SUM(fp.montant_emis) AS prime_exercice,
+           CASE
+             WHEN SUM(fp.montant_emis) < 5000000 THEN '< 5 M'
+             WHEN SUM(fp.montant_emis) < 10000000 THEN '5 - 10 M'
+             WHEN SUM(fp.montant_emis) < 20000000 THEN '10 - 20 M'
+             WHEN SUM(fp.montant_emis) < 50000000 THEN '20 - 50 M'
+             WHEN SUM(fp.montant_emis) < 100000000 THEN '50 - 100 M'
+             WHEN SUM(fp.montant_emis) < 200000000 THEN '100 - 200 M'
+             ELSE '> 200 M'
+           END AS tranche
+         FROM fait_prime fp
+         WHERE fp.exercice = $1
+         GROUP BY fp.police_id
+       ) par_police
+       GROUP BY tranche`,
+      [exercice],
+    );
   }
 }

@@ -1,6 +1,5 @@
 import { Entity, PrimaryGeneratedColumn, Column, OneToMany } from 'typeorm';
 import { Police } from './police.entity';
-import { FaitRegularisation } from './fait-regularisation.entity';
 
 export enum TypeCanal {
   COURTIER_GESTIONNAIRE = 'courtier_gestionnaire',
@@ -23,7 +22,4 @@ export class Canal {
 
   @OneToMany(() => Police, (police) => police.canal)
   polices: Police[];
-
-  @OneToMany(() => FaitRegularisation, (regularisation) => regularisation.canal)
-  regularisations: FaitRegularisation[];
 }

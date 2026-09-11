@@ -5,10 +5,12 @@ import { Police } from '../../entities/police.entity';
 import { Prestataire } from '../../entities/prestataire.entity';
 import { ActeMedical, NatureActe } from '../../entities/acte-medical.entity';
 import { Assure } from '../../entities/assure.entity';
+import { TypeAvenant } from '../../entities/type-avenant.entity';
 import { CanalSource } from '../extractors/canal.extractor';
 import { ApporteurSource } from '../extractors/apporteur.extractor';
 import { PoliceSource } from '../extractors/police.extractor';
-import { transformCanal, transformApporteur, transformPolice, transformCategoriePrestataire } from '../transformers/dimensions.transformer';
+import { TypeAvenantSource } from '../extractors/type-avenant.extractor';
+import { transformCanal, transformApporteur, transformPolice, transformTypeAvenant, transformCategoriePrestataire } from '../transformers/dimensions.transformer';
 
 // Toutes les dimensions sont chargées en SCD1 (écrasement simple) :
 // on privilégie la valeur la plus récente, sans conserver l'historique
@@ -17,6 +19,31 @@ import { transformCanal, transformApporteur, transformPolice, transformCategorie
 
 const canauxCache = new Map<string, Canal>();
 const apporteursCache = new Map<string, Apporteur>();
+const typesAvenantCache = new Map<string, TypeAvenant>();
+
+export async function loadTypesAvenant(sources: TypeAvenantSource[]): Promise<number> {
+  const repo = AppDataSource.getRepository(TypeAvenant);
+  let loaded = 0;
+  for (const source of sources) {
+    const data = transformTypeAvenant(source);
+    let typeAvenant = await repo.findOneBy({ code: data.code });
+    if (!typeAvenant) {
+      typeAvenant = repo.create(data);
+    } else {
+      typeAvenant.libelle = data.libelle;
+      typeAvenant.nature = data.nature;
+    }
+    typeAvenant = await repo.save(typeAvenant);
+    typesAvenantCache.set(data.code, typeAvenant);
+    loaded++;
+  }
+  return loaded;
+}
+
+export function getTypeAvenantByCode(code: string | null): TypeAvenant | null {
+  if (!code) return null;
+  return typesAvenantCache.get(code) ?? null;
+}
 
 export async function loadCanaux(sources: CanalSource[]): Promise<number> {
   const repo = AppDataSource.getRepository(Canal);
@@ -73,10 +100,8 @@ export async function loadPolices(sources: PoliceSource[]): Promise<number> {
     police.souscripteur = data.souscripteur;
     police.statutSouscripteur = data.statutSouscripteur;
     police.statutPolice = data.statutPolice;
-    police.primeAnnuelle = data.primeAnnuelle;
     police.dateEffet = data.dateEffet;
     police.dateEcheance = data.dateEcheance;
-    police.tranchePrime = data.tranchePrime;
     police.canal = canal;
     // Apporteur commercial non garanti en source (~33% de couverture) —
     // on ne bloque pas le chargement de la police en son absence.
@@ -142,9 +167,4 @@ export async function getPoliceIdByNumero(numeroPolice: string): Promise<string 
   const repo = AppDataSource.getRepository(Police);
   const police = await repo.findOneBy({ numeroPolice });
   return police ? police.id : null;
-}
-
-export async function getCanalIdByCode(codeApporteur: string): Promise<string | null> {
-  const canal = canauxCache.get(codeApporteur);
-  return canal ? canal.id : null;
 }

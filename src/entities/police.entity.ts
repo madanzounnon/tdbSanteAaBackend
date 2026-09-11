@@ -6,7 +6,6 @@ import { Apporteur } from './apporteur.entity';
 import { Assure } from './assure.entity';
 import { FaitPrime } from './fait-prime.entity';
 import { FaitSinistre } from './fait-sinistre.entity';
-import { FaitRegularisation } from './fait-regularisation.entity';
 
 export enum StatutSouscripteur {
   ETATIQUE = 'etatique',
@@ -20,6 +19,9 @@ export enum StatutPolice {
   CLOTUREE = 'cloturee',
 }
 
+// Pas de champ prime/tranche stocké ici : la prime d'une police n'a de sens
+// que rapportée à une période, elle se calcule via SUM(fait_prime.montant_emis)
+// filtré sur l'exercice voulu — jamais une valeur figée au chargement.
 @Entity('dim_police')
 export class Police {
   @PrimaryGeneratedColumn('uuid')
@@ -37,9 +39,6 @@ export class Police {
   @Column({ type: 'enum', enum: StatutPolice, name: 'statut_police', default: StatutPolice.ACTIVE })
   statutPolice: StatutPolice;
 
-  @Column({ name: 'prime_annuelle', type: 'numeric', precision: 14, scale: 2 })
-  primeAnnuelle: number;
-
   @Column({ name: 'date_effet', type: 'date' })
   dateEffet: Date;
 
@@ -50,9 +49,6 @@ export class Police {
   // global de l'exercice et déclenche l'avenant de régularisation.
   @Column({ name: 'date_cloture', type: 'date', nullable: true })
   dateCloture: Date | null;
-
-  @Column({ name: 'tranche_prime', length: 20 })
-  tranchePrime: string;
 
   @ManyToOne(() => Canal, (canal) => canal.polices)
   @JoinColumn({ name: 'canal_id' })
@@ -71,7 +67,4 @@ export class Police {
 
   @OneToMany(() => FaitSinistre, (sinistre) => sinistre.police)
   sinistres: FaitSinistre[];
-
-  @OneToMany(() => FaitRegularisation, (regularisation) => regularisation.police)
-  regularisations: FaitRegularisation[];
 }

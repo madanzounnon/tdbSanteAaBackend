@@ -1,22 +1,11 @@
 import { TypeCanal } from '../../entities/canal.entity';
 import { TypeApporteur } from '../../entities/apporteur.entity';
 import { StatutSouscripteur, StatutPolice } from '../../entities/police.entity';
-import { TypeAssure } from '../../entities/assure.entity';
 import { CategoriePrestataire } from '../../entities/prestataire.entity';
 import { CanalSource } from '../extractors/canal.extractor';
 import { ApporteurSource } from '../extractors/apporteur.extractor';
 import { PoliceSource } from '../extractors/police.extractor';
-
-// Calcule la tranche de prime — logique reprise du cahier §3.4.
-export function calculerTranchePrime(primeAnnuelle: number): string {
-  if (primeAnnuelle < 5_000_000) return '< 5 M';
-  if (primeAnnuelle < 10_000_000) return '5 - 10 M';
-  if (primeAnnuelle < 20_000_000) return '10 - 20 M';
-  if (primeAnnuelle < 50_000_000) return '20 - 50 M';
-  if (primeAnnuelle < 100_000_000) return '50 - 100 M';
-  if (primeAnnuelle < 200_000_000) return '100 - 200 M';
-  return '> 200 M';
-}
+import { TypeAvenantSource } from '../extractors/type-avenant.extractor';
 
 // Mapping depuis TYPE_INTERMEDIAIRE.libtypin (ORASSADM). "Courtier" n'est pas
 // subdivisé en gestionnaire/non gestionnaire côté source (cf. ambiguïtés) —
@@ -57,6 +46,16 @@ export function transformApporteur(source: ApporteurSource) {
   };
 }
 
+// Référentiel ORASS TYPE_AVENANT repris tel quel (code/libellé/nature) —
+// pas d'enum applicatif, la valeur fait foi telle que définie en source.
+export function transformTypeAvenant(source: TypeAvenantSource) {
+  return {
+    code: source.code,
+    libelle: source.libelle,
+    nature: source.nature,
+  };
+}
+
 export function transformPolice(source: PoliceSource) {
   return {
     numeroPolice: source.numero_police,
@@ -67,17 +66,11 @@ export function transformPolice(source: PoliceSource) {
         : StatutSouscripteur.NON_ETATIQUE,
     statutPolice:
       StatutPolice[source.statut_police as keyof typeof StatutPolice] ?? StatutPolice.ACTIVE,
-    primeAnnuelle: Number(source.prime_annuelle),
     dateEffet: source.date_effet,
     dateEcheance: source.date_echeance,
-    tranchePrime: calculerTranchePrime(Number(source.prime_annuelle)),
     codeApporteur: source.code_apporteur,
     codeApporteurCommercial: source.code_apporteur_commercial,
   };
-}
-
-export function transformTypeAssure(source: string): TypeAssure {
-  return source === 'ENFANT' ? TypeAssure.ENFANT : TypeAssure.ADULTE;
 }
 
 // Source = BENEFICIAIRE.codnatpr (prestataires filtrés sur codnatbe = 'P',

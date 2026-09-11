@@ -6,7 +6,8 @@ export interface PrimeSource {
   date_emission: Date;
   montant_emis: number;
   montant_encaisse: number;
-  type_souscription: string;
+  code_type_avenant: string | null;
+  date_avenant: Date | null;
   commission_versee: number;
 }
 
@@ -29,11 +30,12 @@ export interface PrimeSource {
 // numero_police = codeinte-numepoli (clé composite, cf. police.extractor.ts
 // — numepoli seul n'est pas unique globalement).
 //
-// type_souscription : numeaven IS NULL -> nouvelle affaire (police
-// d'origine, avant tout avenant), sinon renouvellement — règle confirmée
-// par le métier (une police peut être "nouvelle" un mois et avoir déjà
-// numeaven=1 le mois suivant : le compteur d'avenant n'est volontairement
-// pas mis en correspondance avec TYPE_AVENANT/natuaven ici).
+// code_type_avenant : NULL = police d'origine, aucun avenant (nouvelle
+// affaire). Sinon, code AVENANT.codtypav (ex: '1' = Avenant de
+// renouvellement, confirmé par le métier) — résolu vers dim_type_avenant au
+// chargement plutôt qu'un flag binaire nouvelle affaire/renouvellement, qui
+// confondait à tort tous les autres avenants (incorporation, modification,
+// retrait, ajustement...) avec des renouvellements.
 export async function extractPrimes(since: Date): Promise<PrimeSource[]> {
   const { rows } = await querySource<PrimeSource>(
     `SELECT
@@ -42,10 +44,12 @@ export async function extractPrimes(since: Date): Promise<PrimeSource[]> {
        q.dateeffe AS "date_emission",
        q.primtota AS "montant_emis",
        NVL(enc.montant_encaisse, 0) AS "montant_encaisse",
-       CASE WHEN q.numeaven IS NULL THEN 'NOUVELLE_AFFAIRE' ELSE 'RENOUVELLEMENT' END AS "type_souscription",
+       TO_CHAR(a.codtypav) AS "code_type_avenant",
+       a.datesous AS "date_avenant",
        NVL(q.commappo, 0) + NVL(q.commgest, 0) AS "commission_versee"
      FROM quittance q
      JOIN categorie c ON c.codecate = q.codecate AND c.codebran = 10
+     LEFT JOIN avenant a ON a.codeinte = q.codeinte AND a.numepoli = q.numepoli AND a.numeaven = q.numeaven
      LEFT JOIN (
        SELECT codinteq, numequit, SUM(montenca) AS montant_encaisse
        FROM encaissement_quittance

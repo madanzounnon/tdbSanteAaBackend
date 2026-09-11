@@ -1,9 +1,15 @@
 import { NatureActe } from '../../entities/acte-medical.entity';
 import { StatutFacture } from '../../entities/fait-facture-prestataire.entity';
-import { TypeSouscription } from '../../entities/fait-prime.entity';
+import { TypeAssure } from '../../entities/assure.entity';
 
-export function transformTypeSouscription(source: string): TypeSouscription {
-  return source === 'RENOUVELLEMENT' ? TypeSouscription.RENOUVELLEMENT : TypeSouscription.NOUVELLE_AFFAIRE;
+// Depuis RISQUE_FAMILLE.lienpare (table des ayants droit d'un risque) :
+// E = Enfant (confirmé par les dates de naissance récentes), C = Conjoint
+// (adulte). NULL = assuré principal lui-même (SINISTRE.codememb IS NULL,
+// jamais dans RISQUE_FAMILLE) -> adulte. A/T résiduels (68 lignes sur
+// 219k) et le reliquat non résolu (~19% des codememb renseignés)
+// retombent aussi sur ADULTE par défaut.
+export function transformTypeAssure(lienParente: string | null): TypeAssure {
+  return lienParente === 'E' ? TypeAssure.ENFANT : TypeAssure.ADULTE;
 }
 
 // Depuis FAMILLE_PRESTATION.codfampr (18 familles ORASS) vers les 8

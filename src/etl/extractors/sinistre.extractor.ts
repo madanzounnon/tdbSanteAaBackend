@@ -2,7 +2,8 @@ import { querySource } from '../config/source-pool';
 
 export interface SinistreSource {
   numero_police: string;
-  code_assure: string;
+  matricule_assure: string;
+  lien_parente: string | null;
   famille_prestation: string;
   date_reglement: Date;
   montant_paye: number;
@@ -19,6 +20,25 @@ export interface SinistreSource {
 // "Prestataire Maladie" via NATURE_BENEFICIAIRE) ; catégorie = codnatpr,
 // cf. mapping dans transformCategoriePrestataire.
 //
+// matricule_assure = identifiant de la personne physique réellement soignée
+// (coderisq-codememb), PAS sinistre.codeassu (qui identifie le souscripteur/
+// employeur, cf. RISQUE.codeassu). RISQUE = l'assuré principal (un
+// enregistrement par salarié, avec nom réel et date de naissance,
+// confirmé) ; RISQUE_FAMILLE = ses ayants droit (conjoint/enfants). Quand
+// codememb est NULL (40% des lignes), la personne soignée est l'assuré
+// principal lui-même : coderisq seul identifie alors la personne (résolu
+// à 78,7% vers RISQUE, vérifié).
+//
+// lien_parente (adulte/enfant, résolu) : RISQUE_FAMILLE.lienpare via
+// (codeinte, numepoli, coderisq, codememb) — table des ayants droit d'un
+// risque (E = Enfant confirmé par les dates de naissance, C = Conjoint,
+// A/T résiduels). SINISTRE.codememb IS NULL (40% des lignes) = l'assuré
+// principal lui-même, jamais dans RISQUE_FAMILLE (qui ne liste que les
+// ayants droit) : traité comme adulte par construction. Sur les 60%
+// restants (codememb renseigné), 80,7% se résolvent via RISQUE_FAMILLE ; le
+// reliquat non résolu retombe sur ADULTE par défaut (cf.
+// transformTypeAssure).
+//
 // AMBIGUÏTÉS (cf. liste transmise) :
 // - famille_prestation renvoie les 18 codes ORASS (AM, AMI, AS, B, C, D,
 //   DF, EV, EVSN, HO, MA, OP, PH, PO, RE, TR, V, Z), pas les 8 catégories du
@@ -27,19 +47,19 @@ export interface SinistreSource {
 //   Pharmacie, HO->Hospitalisation, MA->Maternité, OP->Optique, D->
 //   Dentaire, B->Biologie, Z->Imagerie) ; le reste tombe dans Consultation
 //   par défaut — à valider avec le métier.
-// - code_assure = SINISTRE.codeassu, pas confirmé comme "matricule assuré"
-//   ni comme identifiant de la personne physique bénéficiaire (vs
-//   souscripteur) — cf. ambiguïtés dim_assure. type_assure (adulte/enfant)
-//   n'a aucune source identifiée : non extrait, la distinction adulte/enfant
-//   reste à câbler une fois la bonne table de personnes physiques trouvée.
 //
 // numero_police = codeinte-numepoli (clé composite, cf. police.extractor.ts
 // — numepoli seul n'est pas unique globalement).
+//
+// d.datepres IS NOT NULL : exclut 60 lignes sur 2 248 499 (0,003%) où la
+// date de prestation est absente en source — fait_sinistre.date est NOT
+// NULL, et une ligne sans date n'est de toute façon pas exploitable.
 export async function extractSinistres(since: Date): Promise<SinistreSource[]> {
   const { rows } = await querySource<SinistreSource>(
     `SELECT
        TO_CHAR(s.codeinte) || '-' || TO_CHAR(s.numepoli) AS "numero_police",
-       TO_CHAR(s.codeassu) AS "code_assure",
+       TO_CHAR(s.coderisq) || '-' || NVL(TO_CHAR(s.codememb), '0') AS "matricule_assure",
+       rf.lienpare AS "lien_parente",
        fp.codfampr AS "famille_prestation",
        d.datepres AS "date_reglement",
        d.montregl AS "montant_paye",
@@ -52,7 +72,11 @@ export async function extractSinistres(since: Date): Promise<SinistreSource[]> {
      JOIN prestation p ON p.codepres = d.codepres
      JOIN famille_prestation fp ON fp.codfampr = p.codfampr
      LEFT JOIN beneficiaire b ON b.codebene = s.codebene AND b.codnatbe = 'P'
-     WHERE d.modi__le >= :1`,
+     LEFT JOIN risque_famille rf
+       ON rf.codeinte = s.codeinte AND rf.numepoli = s.numepoli
+      AND rf.coderisq = s.coderisq AND rf.codememb = s.codememb
+     WHERE d.modi__le >= :1
+       AND d.datepres IS NOT NULL`,
     [since],
   );
   return rows;

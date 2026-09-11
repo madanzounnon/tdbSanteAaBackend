@@ -23,7 +23,7 @@ export class RegularisationService {
          SUM(montant_encaisse) AS deja_encaisse,
          SUM(montant_a_regulariser) - SUM(montant_encaisse) AS reste_a_recouvrer,
          ROUND(SUM(montant_encaisse) / NULLIF(SUM(montant_a_regulariser), 0) * 100, 1) AS taux_encaissement_pct
-       FROM fait_regularisation WHERE exercice = $1`,
+       FROM v_regularisation WHERE exercice = $1`,
       [exercice],
     );
     return result;
@@ -37,7 +37,7 @@ export class RegularisationService {
          SUM(r.montant_encaisse) AS encaisse,
          SUM(r.montant_a_regulariser) - SUM(r.montant_encaisse) AS reste,
          ROUND(SUM(r.montant_encaisse) / NULLIF(SUM(r.montant_a_regulariser), 0) * 100, 1) AS taux_pct
-       FROM fait_regularisation r
+       FROM v_regularisation r
        JOIN dim_canal c ON c.id = r.canal_id
        WHERE r.exercice = $1
        GROUP BY c.nom
