@@ -7,13 +7,12 @@ import { ApporteurSource } from '../extractors/apporteur.extractor';
 import { PoliceSource } from '../extractors/police.extractor';
 import { TypeAvenantSource } from '../extractors/type-avenant.extractor';
 
-// Mapping depuis TYPE_INTERMEDIAIRE.libtypin (ORASSADM). "Courtier" n'est pas
-// subdivisé en gestionnaire/non gestionnaire côté source (cf. ambiguïtés) —
-// par défaut non gestionnaire, à corriger dès que le critère réel est connu
-// (piste : présence d'une commission de gestion sur APPORTEUR_CONTRAT).
+// Mapping depuis TYPE_INTERMEDIAIRE.libtypin (ORASSADM). Pas de distinction
+// gestionnaire/non gestionnaire pour les courtiers (décision produit — la
+// source ne la portait de toute façon pas).
 const MAPPING_TYPE_CANAL: Record<string, TypeCanal> = {
   'Bureau Direct': TypeCanal.BUREAU_DIRECT,
-  Courtier: TypeCanal.COURTIER_NON_GESTIONNAIRE,
+  Courtier: TypeCanal.COURTIER,
   'Bancassurance - MicroFinance': TypeCanal.BANCASSURANCE,
   'Agent Général': TypeCanal.COORDINATION_AGENCES,
   // Polices gérées directement par la compagnie, sans intermédiaire tiers

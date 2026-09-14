@@ -2,8 +2,7 @@ import { Entity, PrimaryGeneratedColumn, Column, OneToMany } from 'typeorm';
 import { Police } from './police.entity';
 
 export enum TypeCanal {
-  COURTIER_GESTIONNAIRE = 'courtier_gestionnaire',
-  COURTIER_NON_GESTIONNAIRE = 'courtier_non_gestionnaire',
+  COURTIER = 'courtier',
   BUREAU_DIRECT = 'bureau_direct',
   COORDINATION_AGENCES = 'coordination_agences',
   BANCASSURANCE = 'bancassurance',

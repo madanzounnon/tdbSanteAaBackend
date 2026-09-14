@@ -3,6 +3,9 @@ import { FaitPrime } from '../../entities/fait-prime.entity';
 import { FaitSinistre } from '../../entities/fait-sinistre.entity';
 import { FaitFacturePrestataire } from '../../entities/fait-facture-prestataire.entity';
 import { Police } from '../../entities/police.entity';
+import { Assure } from '../../entities/assure.entity';
+import { ActeMedical } from '../../entities/acte-medical.entity';
+import { Prestataire } from '../../entities/prestataire.entity';
 import { PrimeSource } from '../extractors/prime.extractor';
 import { SinistreSource } from '../extractors/sinistre.extractor';
 import { FactureSource } from '../extractors/facture-prestataire.extractor';
@@ -64,20 +67,24 @@ export async function loadSinistres(sources: SinistreSource[]): Promise<number> 
       ? await findOrCreatePrestataire(source.nom_prestataire, source.code_categorie_prestataire ?? '')
       : null;
 
-    const fait = repo.create({
-      police: { id: policeId } as Police,
-      assure: { id: assure.id },
-      acteMedical: { id: acte.id },
-      prestataire: prestataire ? { id: prestataire.id } : null,
-      date: source.date_reglement,
-      exercice: extraireExercice(source.date_reglement),
-      mois: extraireMois(source.date_reglement),
-      montantPaye: Number(source.montant_paye),
-    });
+    // Upsert sur numero_reglement_ligne (clé naturelle) : une même ligne de
+    // règlement réextraite (fenêtre chevauchante, relance) met à jour au
+    // lieu de dupliquer.
+    let fait = await repo.findOneBy({ numeroReglementLigne: source.numero_reglement_ligne });
+    if (!fait) {
+      fait = repo.create();
+      fait.numeroReglementLigne = source.numero_reglement_ligne;
+    }
+    fait.police = { id: policeId } as Police;
+    fait.assure = { id: assure.id } as Assure;
+    fait.acteMedical = { id: acte.id } as ActeMedical;
+    fait.prestataire = prestataire ? ({ id: prestataire.id } as Prestataire) : null;
+    fait.date = source.date_reglement;
+    fait.exercice = extraireExercice(source.date_reglement);
+    fait.mois = extraireMois(source.date_reglement);
+    fait.montantPaye = Number(source.montant_paye);
 
-    // Fait immuable une fois réglé : simple insertion, pas d'upsert.
-    // La déduplication est assurée en amont par le watermark d'extraction.
-    await repo.insert(fait);
+    await repo.save(fait);
     loaded++;
   }
   return loaded;

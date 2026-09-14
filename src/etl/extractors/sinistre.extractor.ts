@@ -1,6 +1,7 @@
 import { querySource } from '../config/source-pool';
 
 export interface SinistreSource {
+  numero_reglement_ligne: string;
   numero_police: string;
   matricule_assure: string;
   lien_parente: string | null;
@@ -54,9 +55,16 @@ export interface SinistreSource {
 // d.datepres IS NOT NULL : exclut 60 lignes sur 2 248 499 (0,003%) où la
 // date de prestation est absente en source — fait_sinistre.date est NOT
 // NULL, et une ligne sans date n'est de toute façon pas exploitable.
+//
+// numero_reglement_ligne = clé naturelle de la ligne de règlement
+// (codeinte-exersini-numesini-numeregl-numelign), pour permettre l'upsert
+// au chargement plutôt qu'une simple insertion : sans elle, rejouer une
+// fenêtre d'extraction qui se chevauche dupliquerait le sinistre.
 export async function extractSinistres(since: Date): Promise<SinistreSource[]> {
   const { rows } = await querySource<SinistreSource>(
     `SELECT
+       TO_CHAR(d.codeinte) || '-' || TO_CHAR(d.exersini) || '-' || TO_CHAR(d.numesini)
+         || '-' || TO_CHAR(d.numeregl) || '-' || TO_CHAR(d.numelign) AS "numero_reglement_ligne",
        TO_CHAR(s.codeinte) || '-' || TO_CHAR(s.numepoli) AS "numero_police",
        TO_CHAR(s.coderisq) || '-' || NVL(TO_CHAR(s.codememb), '0') AS "matricule_assure",
        rf.lienpare AS "lien_parente",
