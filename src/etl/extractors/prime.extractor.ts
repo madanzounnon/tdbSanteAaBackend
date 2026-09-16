@@ -36,6 +36,14 @@ export interface PrimeSource {
 // chargement plutôt qu'un flag binaire nouvelle affaire/renouvellement, qui
 // confondait à tort tous les autres avenants (incorporation, modification,
 // retrait, ajustement...) avec des renouvellements.
+//
+// COALESCE(q.modi__le, q.cree__le) >= :1 : 42 lignes sur 30 512 ont
+// modi__le à NULL — sans ce fallback, une comparaison NULL >= date étant
+// toujours fausse en SQL, elles ne seraient jamais extraites (même bug que
+// sur police/sinistre, cf. police.extractor.ts). On retombe sur cree__le
+// (date de création, jamais NULL sur QUITTANCE) plutôt qu'un simple
+// `OR modi__le IS NULL`, qui aurait fait revenir ces lignes à chaque
+// extraction incrémentale indéfiniment.
 export async function extractPrimes(since: Date): Promise<PrimeSource[]> {
   const { rows } = await querySource<PrimeSource>(
     `SELECT
@@ -55,7 +63,7 @@ export async function extractPrimes(since: Date): Promise<PrimeSource[]> {
        FROM encaissement_quittance
        GROUP BY codinteq, numequit
      ) enc ON enc.codinteq = q.codeinte AND enc.numequit = q.numequit
-     WHERE q.modi__le >= :1`,
+     WHERE COALESCE(q.modi__le, q.cree__le) >= :1`,
     [since],
   );
   return rows;

@@ -41,6 +41,12 @@ export interface PoliceSource {
 // portefeuille Santé, NULL sinon). Sous-requête MIN(...) pour éviter la
 // multiplication de lignes : APPORTEUR_CONTRAT porte plusieurs lignes par
 // contrat (une par garantie/CODEGARA), avec en général le même apporteur.
+//
+// p.modi__le >= :1 OR p.modi__le IS NULL : certaines polices (souvent les
+// plus anciennes, jamais retouchées) ont modi__le à NULL — une comparaison
+// NULL >= date est toujours fausse en SQL, donc ces polices n'étaient JAMAIS
+// extraites, quel que soit `since` (bug vérifié : 4 polices confirmées avec
+// modi__le NULL, invisibles à toute extraction incrémentale avant ce fix).
 export async function extractPolices(since: Date): Promise<PoliceSource[]> {
   const { rows } = await querySource<PoliceSource>(
     `SELECT
@@ -70,7 +76,7 @@ export async function extractPolices(since: Date): Promise<PoliceSource[]> {
      FROM police p
      JOIN categorie c ON c.codecate = p.codecate AND c.codebran = 10
      JOIN assure a ON a.codeassu = p.codeassu
-     WHERE p.modi__le >= :1`,
+     WHERE (p.modi__le >= :1 OR p.modi__le IS NULL)`,
     [since],
   );
   return rows;

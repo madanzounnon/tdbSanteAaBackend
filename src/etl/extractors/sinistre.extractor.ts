@@ -56,15 +56,38 @@ export interface SinistreSource {
 // date de prestation est absente en source — fait_sinistre.date est NOT
 // NULL, et une ligne sans date n'est de toute façon pas exploitable.
 //
+// COALESCE(d.modi__le, d.cree__le) >= :1 : BUG MAJEUR corrigé — 812 968
+// lignes sur 2 248 499 (36%) ont modi__le à NULL (jamais modifiées depuis
+// création). Une comparaison NULL >= date étant toujours fausse en SQL, ces
+// lignes n'étaient JAMAIS extraites avant ce fix, quel que soit `since` ou
+// `exercice`. Même bug corrigé sur police.extractor.ts. On retombe sur
+// cree__le (date de création, NULL_BOTH = 0 vérifié sur 5,1M lignes) plutôt
+// que sur un simple `OR modi__le IS NULL`, qui aurait fait revenir ces
+// lignes à CHAQUE extraction incrémentale indéfiniment (cree__le donne un
+// vrai filtre temporel, pas un fallback toujours vrai).
+//
 // numero_reglement_ligne = clé naturelle de la ligne de règlement
-// (codeinte-exersini-numesini-numeregl-numelign), pour permettre l'upsert
-// au chargement plutôt qu'une simple insertion : sans elle, rejouer une
-// fenêtre d'extraction qui se chevauche dupliquerait le sinistre.
-export async function extractSinistres(since: Date): Promise<SinistreSource[]> {
+// (codeinte-exersini-numesini-numeregl-numelign-numeordr), pour permettre
+// l'upsert au chargement plutôt qu'une simple insertion : sans elle, rejouer
+// une fenêtre d'extraction qui se chevauche dupliquerait le sinistre.
+// NUMEORDR est indispensable : sans lui, la clé n'est PAS unique (vérifié —
+// un même (numeregl, numelign) porte plusieurs articles distincts, ex.
+// plusieurs médicaments d'une même ordonnance pharmacie, chacun avec son
+// propre numeordr). Avec numeordr : 2 248 439 lignes = 2 248 439 clés
+// distinctes, 0 doublon.
+//
+// exercice (optionnel) filtre sur SINISTRE.exersini (exercice de
+// survenance) : permet d'extraire par tranches (un exercice à la fois) au
+// lieu de tout l'historique d'un coup — plus sûr face aux coupures VPN sur
+// un aussi gros volume (~2,2M lignes toutes années confondues).
+export async function extractSinistres(since: Date, exercice?: number): Promise<SinistreSource[]> {
+  const exerciceFilter = exercice !== undefined ? 'AND s.exersini = :2' : '';
+  const binds: unknown[] = exercice !== undefined ? [since, exercice] : [since];
   const { rows } = await querySource<SinistreSource>(
     `SELECT
        TO_CHAR(d.codeinte) || '-' || TO_CHAR(d.exersini) || '-' || TO_CHAR(d.numesini)
-         || '-' || TO_CHAR(d.numeregl) || '-' || TO_CHAR(d.numelign) AS "numero_reglement_ligne",
+         || '-' || TO_CHAR(d.numeregl) || '-' || TO_CHAR(d.numelign) || '-' || TO_CHAR(d.numeordr)
+         AS "numero_reglement_ligne",
        TO_CHAR(s.codeinte) || '-' || TO_CHAR(s.numepoli) AS "numero_police",
        TO_CHAR(s.coderisq) || '-' || NVL(TO_CHAR(s.codememb), '0') AS "matricule_assure",
        rf.lienpare AS "lien_parente",
@@ -83,9 +106,10 @@ export async function extractSinistres(since: Date): Promise<SinistreSource[]> {
      LEFT JOIN risque_famille rf
        ON rf.codeinte = s.codeinte AND rf.numepoli = s.numepoli
       AND rf.coderisq = s.coderisq AND rf.codememb = s.codememb
-     WHERE d.modi__le >= :1
-       AND d.datepres IS NOT NULL`,
-    [since],
+     WHERE COALESCE(d.modi__le, d.cree__le) >= :1
+       AND d.datepres IS NOT NULL
+       ${exerciceFilter}`,
+    binds,
   );
   return rows;
 }

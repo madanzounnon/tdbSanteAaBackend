@@ -5,16 +5,18 @@ import { ActeMedical } from './acte-medical.entity';
 import { Prestataire } from './prestataire.entity';
 
 // Une ligne = une ligne de règlement DETAIL_SINISTRE_REGLE (codeinte-
-// numeregl-numelign, clé naturelle unique) : sans elle, rejouer une fenêtre
-// d'extraction qui se chevauche insérerait des doublons (pas d'upsert
-// possible sans clé).
+// exersini-numesini-numeregl-numelign-numeordr, clé naturelle unique —
+// numeordr est indispensable : un même (numeregl, numelign) porte plusieurs
+// articles distincts, ex. plusieurs médicaments d'une même ordonnance) :
+// sans elle, rejouer une fenêtre d'extraction qui se chevauche insérerait
+// des doublons (pas d'upsert possible sans clé).
 @Entity('fait_sinistre')
 @Index(['exercice', 'mois'])
 export class FaitSinistre {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ name: 'numero_reglement_ligne', length: 50, unique: true })
+  @Column({ name: 'numero_reglement_ligne', length: 60, unique: true })
   numeroReglementLigne: string;
 
   @ManyToOne(() => Police, (police) => police.sinistres)
