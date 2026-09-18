@@ -13,6 +13,16 @@ export const getPolicesCritiques = async (req: Request, res: Response) => {
   }
 };
 
+export const getPolicesParStatut = async (req: Request, res: Response) => {
+  try {
+    const exercice = Number(req.query.exercice) || new Date().getFullYear();
+    res.json(await service.getPolicesParStatut(exercice));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur récupération polices par statut' });
+  }
+};
+
 export const getMontantsARegulariser = async (req: Request, res: Response) => {
   try {
     const exercice = Number(req.query.exercice) || new Date().getFullYear();

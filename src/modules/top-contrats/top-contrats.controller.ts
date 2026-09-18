@@ -24,3 +24,18 @@ export const getTopParSinistralite = async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Erreur récupération top contrats par sinistralité' });
   }
 };
+
+export const getProfilPolice = async (req: Request, res: Response) => {
+  try {
+    const exercice = Number(req.query.exercice) || new Date().getFullYear();
+    const profil = await service.getProfilPolice(req.params.numeroPolice, exercice);
+    if (!profil) {
+      res.status(404).json({ error: `Police ${req.params.numeroPolice} introuvable` });
+      return;
+    }
+    res.json(profil);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur récupération profil de risque' });
+  }
+};

@@ -19,6 +19,22 @@ export class PrestatairesService {
       .getRawMany();
   }
 
+  // Cahier §5.1 "Répartition du nombre de prestataires par catégorie" —
+  // décompte du réseau conventionné par catégorie (Pharmacie, Clinique,
+  // Laboratoire...), pour situer la diversité de l'offre de soins.
+  async getParCategorie() {
+    return AppDataSource.query(`
+      SELECT
+        categorie,
+        COUNT(*) AS nombre,
+        ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER (), 1) AS part_pct
+      FROM dim_prestataire
+      WHERE conventionne = true
+      GROUP BY categorie
+      ORDER BY nombre DESC
+    `);
+  }
+
   async getPerformanceParExercice() {
     return AppDataSource.query(`
       SELECT

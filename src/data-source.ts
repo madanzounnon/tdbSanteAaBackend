@@ -11,6 +11,7 @@ import { TypeAvenant } from './entities/type-avenant.entity';
 import { FaitPrime } from './entities/fait-prime.entity';
 import { FaitSinistre } from './entities/fait-sinistre.entity';
 import { FaitFacturePrestataire } from './entities/fait-facture-prestataire.entity';
+import { ObjectifAnnuel } from './entities/objectif-annuel.entity';
 
 // Point d'entrée unique vers PostgreSQL. synchronize=false : le schéma
 // n'évolue que via des migrations explicites, jamais en auto-sync sur
@@ -35,6 +36,7 @@ export const AppDataSource = new DataSource({
     FaitPrime,
     FaitSinistre,
     FaitFacturePrestataire,
+    ObjectifAnnuel,
   ],
   // Adapte le glob à l'environnement d'exécution : ts-node exécute ce
   // fichier en .ts (migrations lues directement en TypeScript), le build

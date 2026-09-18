@@ -6,7 +6,10 @@ export class SinistraliteService {
   async getSpPortefeuille(exercice: number) {
     const [result] = await AppDataSource.query(
       `SELECT
-         ROUND(AVG(sp_acquis_pct), 1) AS sp_moyen_pct,
+         ROUND(SUM(sinistres_payes) / NULLIF(SUM(prime_acquise), 0) * 100, 1) AS sp_moyen_pct,
+         ROUND(SUM(sinistres_payes) / NULLIF(SUM(prime_emise), 0) * 100, 1) AS sp_emis_pct,
+         ROUND((SUM(prime_acquise) - SUM(sinistres_payes)) / NULLIF(SUM(prime_acquise), 0) * 100, 1) AS taux_rentabilite_pct,
+         SUM(prime_emise) AS primes_emises,
          SUM(prime_acquise) AS primes_acquises,
          SUM(sinistres_payes) AS sinistres_payes,
          SUM(prime_acquise) - SUM(sinistres_payes) AS surplus_technique,
@@ -36,17 +39,33 @@ export class SinistraliteService {
     );
   }
 
+  // Cahier §4.1 "Évolution du S/P mensuel" : "Comparaison avec le même mois
+  // de l'exercice précédent pour détecter les anomalies" — la courbe N-1
+  // est donc une référence obligatoire, jamais une série isolée. Renvoie
+  // les 12 mois (generate_series) pour un axe complet même quand l'exercice
+  // en cours n'est pas terminé.
   async getSpMensuel(exercice: number) {
     return AppDataSource.query(
       `SELECT
-         fp.mois,
-         ROUND(SUM(fs.montant_paye) / NULLIF(SUM(fp.montant_emis), 0) * 100, 1) AS sp_mensuel_pct
-       FROM fait_prime fp
-       LEFT JOIN fait_sinistre fs
-         ON fs.police_id = fp.police_id AND fs.exercice = fp.exercice AND fs.mois = fp.mois
-       WHERE fp.exercice = $1
-       GROUP BY fp.mois
-       ORDER BY fp.mois`,
+         m.mois,
+         ROUND(actuel.sinistre / NULLIF(actuel.prime, 0) * 100, 1) AS sp_actuel_pct,
+         ROUND(precedent.sinistre / NULLIF(precedent.prime, 0) * 100, 1) AS sp_precedent_pct
+       FROM generate_series(1, 12) AS m(mois)
+       LEFT JOIN (
+         SELECT fp.mois, SUM(fp.montant_emis) AS prime, COALESCE(SUM(fs.montant_paye), 0) AS sinistre
+         FROM fait_prime fp
+         LEFT JOIN fait_sinistre fs ON fs.police_id = fp.police_id AND fs.exercice = fp.exercice AND fs.mois = fp.mois
+         WHERE fp.exercice = $1
+         GROUP BY fp.mois
+       ) actuel ON actuel.mois = m.mois
+       LEFT JOIN (
+         SELECT fp.mois, SUM(fp.montant_emis) AS prime, COALESCE(SUM(fs.montant_paye), 0) AS sinistre
+         FROM fait_prime fp
+         LEFT JOIN fait_sinistre fs ON fs.police_id = fp.police_id AND fs.exercice = fp.exercice AND fs.mois = fp.mois
+         WHERE fp.exercice = $1 - 1
+         GROUP BY fp.mois
+       ) precedent ON precedent.mois = m.mois
+       ORDER BY m.mois`,
       [exercice],
     );
   }

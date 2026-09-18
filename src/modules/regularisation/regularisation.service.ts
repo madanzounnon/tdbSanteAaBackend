@@ -8,12 +8,28 @@ export class RegularisationService {
          prime_emise AS prime_annuelle,
          sinistres_payes AS consommation,
          sp_emis_pct AS sp_global,
-         statut_risque
+         statut_risque,
+         statut_police
        FROM mv_sp_portefeuille
        WHERE exercice = $1 AND statut_risque IN ('critique', 'perte_seche')
        ORDER BY sp_emis_pct DESC`,
       [exercice],
     );
+  }
+
+  // Distingue les polices déjà échues (S/P figé, régularisation à engager
+  // sans attendre — cahier §6.1 "Nombre de Polices à Régulariser") des
+  // polices encore actives mais déjà en zone critique ("Polices Critiques
+  // Actives", action possible en cours de contrat).
+  async getPolicesParStatut(exercice: number) {
+    const [{ echues, actives }] = await AppDataSource.query(
+      `SELECT
+         COUNT(*) FILTER (WHERE statut_police = 'echue' AND statut_risque IN ('critique', 'perte_seche')) AS echues,
+         COUNT(*) FILTER (WHERE statut_police = 'active' AND statut_risque IN ('critique', 'perte_seche')) AS actives
+       FROM mv_sp_portefeuille WHERE exercice = $1`,
+      [exercice],
+    );
+    return { policesARegulariser: Number(echues), policesCritiquesActives: Number(actives) };
   }
 
   async getMontantsARegulariser(exercice: number) {

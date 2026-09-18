@@ -7,6 +7,7 @@ import sinistraliteRoutes from './modules/sinistralite/sinistralite.routes';
 import prestatairesRoutes from './modules/prestataires/prestataires.routes';
 import regularisationRoutes from './modules/regularisation/regularisation.routes';
 import topContratsRoutes from './modules/top-contrats/top-contrats.routes';
+import objectifsRoutes from './modules/objectifs/objectifs.routes';
 
 export const createApp = () => {
   const app = express();
@@ -22,6 +23,7 @@ export const createApp = () => {
   app.use('/api/prestataires', prestatairesRoutes);
   app.use('/api/regularisation', regularisationRoutes);
   app.use('/api/top-contrats', topContratsRoutes);
+  app.use('/api/objectifs', objectifsRoutes);
 
   app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 

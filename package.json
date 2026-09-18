@@ -10,7 +10,7 @@
     "typeorm": "typeorm-ts-node-commonjs",
     "migration:run": "npm run typeorm -- migration:run -d src/data-source.ts",
     "migration:revert": "npm run typeorm -- migration:revert -d src/data-source.ts",
-    "refresh:mv": "psql \"$DATABASE_URL\" -c \"REFRESH MATERIALIZED VIEW mv_sp_portefeuille;\"",
+    "refresh:mv": "ts-node src/scripts/refresh-mv.ts",
     "etl:daily": "ts-node src/etl/jobs/daily.job.ts",
     "etl:monthly": "ts-node src/etl/jobs/monthly.job.ts",
     "etl:quarterly": "ts-node src/etl/jobs/quarterly.job.ts",

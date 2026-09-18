@@ -12,6 +12,15 @@ export const getFacturesImpayees = async (_req: Request, res: Response) => {
   }
 };
 
+export const getParCategorie = async (_req: Request, res: Response) => {
+  try {
+    res.json(await service.getParCategorie());
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur récupération répartition par catégorie' });
+  }
+};
+
 export const getPerformanceParExercice = async (_req: Request, res: Response) => {
   try {
     res.json(await service.getPerformanceParExercice());

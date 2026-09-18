@@ -13,3 +13,14 @@ export const getSynthese = async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Erreur récupération synthèse Vue Exécutive' });
   }
 };
+
+export const getTendanceN1 = async (req: Request, res: Response) => {
+  try {
+    const exercice = Number(req.query.exercice) || new Date().getFullYear();
+    const data = await service.getTendanceN1(exercice);
+    res.json(data);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur récupération tendance vs N-1' });
+  }
+};
