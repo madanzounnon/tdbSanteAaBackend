@@ -5,6 +5,10 @@ export interface PrimeSource {
   numero_police: string;
   date_emission: Date;
   montant_emis: number;
+  prime_nette: number;
+  accessoire: number;
+  taxe_prime: number;
+  taxe_commission: number;
   montant_encaisse: number;
   code_type_avenant: string | null;
   date_avenant: Date | null;
@@ -26,6 +30,15 @@ export interface PrimeSource {
 // chargement écraserait les mouvements précédents au lieu de les cumuler.
 // ENCAISSEMENT_QUITTANCE agrégée par quittance pour le montant encaissé.
 // commission_versee = commission apporteur + gestion (commappo + commgest).
+//
+// Décomposition de primtota (cahier §3.1 "Prime Nette d'Accessoires") :
+// primnett (prime nette), accequit (accessoire), taxeprim (taxe prime).
+// Vérifié sur données réelles : primtota = primnett + taxeprim + accequit +
+// taxeacce sur les quittances standards. taxecomm (taxe sur commission,
+// distincte de taxeprim) est également reprise : c'est la seule autre
+// colonne de taxe/timbre réellement alimentée pour la branche Santé
+// (codebran = 10) — taxeacce, timbdime, timbgrad, taxequi2-5, taxecopo,
+// taxetidi, taxetigr valent systématiquement 0 ici et ne sont pas repris.
 //
 // numero_police = codeinte-numepoli (clé composite, cf. police.extractor.ts
 // — numepoli seul n'est pas unique globalement).
@@ -51,6 +64,10 @@ export async function extractPrimes(since: Date): Promise<PrimeSource[]> {
        TO_CHAR(q.codeinte) || '-' || TO_CHAR(q.numepoli) AS "numero_police",
        q.dateeffe AS "date_emission",
        q.primtota AS "montant_emis",
+       NVL(q.primnett, 0) AS "prime_nette",
+       NVL(q.accequit, 0) AS "accessoire",
+       NVL(q.taxeprim, 0) AS "taxe_prime",
+       NVL(q.taxecomm, 0) AS "taxe_commission",
        NVL(enc.montant_encaisse, 0) AS "montant_encaisse",
        TO_CHAR(a.codtypav) AS "code_type_avenant",
        a.datesous AS "date_avenant",

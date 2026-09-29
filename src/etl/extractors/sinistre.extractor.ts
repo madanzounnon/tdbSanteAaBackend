@@ -5,6 +5,11 @@ export interface SinistreSource {
   numero_police: string;
   matricule_assure: string;
   lien_parente: string | null;
+  nom_assure: string | null;
+  date_naissance_assure: Date | null;
+  sexe_assure: string | null;
+  est_assure_principal: number;
+  date_entree: Date | null;
   famille_prestation: string;
   date_reglement: Date;
   montant_paye: number;
@@ -39,6 +44,14 @@ export interface SinistreSource {
 // restants (codememb renseigné), 80,7% se résolvent via RISQUE_FAMILLE ; le
 // reliquat non résolu retombe sur ADULTE par défaut (cf.
 // transformTypeAssure).
+//
+// Identité individuelle (nom/date de naissance/sexe) : même résolution que
+// lien_parente — RISQUE_FAMILLE (nom_memb/datenais/sexememb) en priorité
+// pour un ayant droit résolu, sinon repli sur RISQUE (liberisq/datenais/
+// sexerisq), l'assuré principal lui-même. Le reliquat non résolu (ayant
+// droit non trouvé dans RISQUE_FAMILLE) hérite donc par erreur de l'identité
+// du principal — même angle mort que lien_parente ci-dessus, pas un bug
+// nouveau.
 //
 // AMBIGUÏTÉS (cf. liste transmise) :
 // - famille_prestation renvoie les 18 codes ORASS (AM, AMI, AS, B, C, D,
@@ -91,6 +104,11 @@ export async function extractSinistres(since: Date, exercice?: number): Promise<
        TO_CHAR(s.codeinte) || '-' || TO_CHAR(s.numepoli) AS "numero_police",
        TO_CHAR(s.coderisq) || '-' || NVL(TO_CHAR(s.codememb), '0') AS "matricule_assure",
        rf.lienpare AS "lien_parente",
+       COALESCE(rf.nom_memb, r.liberisq) AS "nom_assure",
+       COALESCE(rf.datenais, r.datenais) AS "date_naissance_assure",
+       COALESCE(rf.sexememb, r.sexerisq) AS "sexe_assure",
+       CASE WHEN s.codememb IS NULL THEN 1 ELSE 0 END AS "est_assure_principal",
+       rf.dateentr AS "date_entree",
        fp.codfampr AS "famille_prestation",
        d.datepres AS "date_reglement",
        d.montregl AS "montant_paye",
@@ -106,6 +124,8 @@ export async function extractSinistres(since: Date, exercice?: number): Promise<
      LEFT JOIN risque_famille rf
        ON rf.codeinte = s.codeinte AND rf.numepoli = s.numepoli
       AND rf.coderisq = s.coderisq AND rf.codememb = s.codememb
+     LEFT JOIN risque r
+       ON r.codeinte = s.codeinte AND r.numepoli = s.numepoli AND r.coderisq = s.coderisq
      WHERE COALESCE(d.modi__le, d.cree__le) >= :1
        AND d.datepres IS NOT NULL
        ${exerciceFilter}`,

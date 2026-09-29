@@ -48,6 +48,28 @@ export class FaitPrime {
   @Column({ name: 'montant_emis', type: 'numeric', precision: 14, scale: 2 })
   montantEmis: number;
 
+  // Décomposition de montant_emis (source QUITTANCE.primtota) : sur les cas
+  // standards, primtota = prime_nette + taxe_prime + accessoire + taxe_accessoire
+  // (vérifié sur données réelles) — non garanti sur les ristournes/annulations,
+  // dont le signe de chaque composante n'est pas toujours cohérent avec le
+  // total (cf. note sur montant_emis dans prime.extractor.ts).
+  @Column({ name: 'prime_nette', type: 'numeric', precision: 14, scale: 2, default: 0 })
+  primeNette: number;
+
+  @Column({ name: 'accessoire', type: 'numeric', precision: 14, scale: 2, default: 0 })
+  accessoire: number;
+
+  @Column({ name: 'taxe_prime', type: 'numeric', precision: 14, scale: 2, default: 0 })
+  taxePrime: number;
+
+  // Taxe sur la commission versée (QUITTANCE.taxecomm) — distincte de
+  // taxe_prime. Seules ces deux taxes sont réellement alimentées pour la
+  // branche Santé (codebran = 10) ; les autres colonnes de taxe/timbre
+  // source (taxeacce, timbdime, timbgrad, taxequi2-5, taxecopo, taxetidi,
+  // taxetigr) sont systématiquement à 0 et n'ont pas été reprises.
+  @Column({ name: 'taxe_commission', type: 'numeric', precision: 14, scale: 2, default: 0 })
+  taxeCommission: number;
+
   @Column({ name: 'montant_encaisse', type: 'numeric', precision: 14, scale: 2, default: 0 })
   montantEncaisse: number;
 

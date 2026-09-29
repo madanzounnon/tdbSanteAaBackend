@@ -40,6 +40,10 @@ export async function loadPrimes(sources: PrimeSource[]): Promise<number> {
     fait.typeAvenant = getTypeAvenantByCode(source.code_type_avenant);
     fait.dateAvenant = source.date_avenant;
     fait.montantEmis = Number(source.montant_emis);
+    fait.primeNette = Number(source.prime_nette);
+    fait.accessoire = Number(source.accessoire);
+    fait.taxePrime = Number(source.taxe_prime);
+    fait.taxeCommission = Number(source.taxe_commission);
     fait.montantEncaisse = Number(source.montant_encaisse);
     fait.commissionVersee = Number(source.commission_versee);
 
@@ -61,7 +65,11 @@ export async function loadSinistres(sources: SinistreSource[]): Promise<number> 
     }
 
     // type_assure résolu via RISQUE_FAMILLE.lienpare, cf. sinistre.extractor.ts.
-    const assure = await findOrCreateAssure(policeId, source.matricule_assure, transformTypeAssure(source.lien_parente), 0);
+    const assure = await findOrCreateAssure(
+      policeId, source.matricule_assure, transformTypeAssure(source.lien_parente), 0,
+      source.nom_assure, source.date_naissance_assure, source.sexe_assure,
+      source.est_assure_principal === 1, source.lien_parente, source.date_entree,
+    );
     const acte = await findOrCreateActeMedical(transformNatureActe(source.famille_prestation));
     const prestataire = source.nom_prestataire
       ? await findOrCreatePrestataire(source.nom_prestataire, source.code_categorie_prestataire ?? '')

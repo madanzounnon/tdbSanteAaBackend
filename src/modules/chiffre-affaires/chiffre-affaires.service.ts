@@ -30,9 +30,12 @@ export class ChiffreAffairesService {
          SUM(fp.montant_emis) AS ca_ytd,
          SUM(fp.montant_encaisse) AS ca_encaisse_ytd,
          COUNT(DISTINCT fp.police_id) AS nombre_polices,
+         COUNT(DISTINCT CASE WHEN ta.code IS NULL THEN fp.police_id END) AS nouvelles_affaires,
+         COUNT(DISTINCT CASE WHEN ta.code = '1' THEN fp.police_id END) AS renouvellements,
          sp.sp_pct,
          oa.montant_ca_objectif AS objectif_ca
        FROM fait_prime fp
+       LEFT JOIN dim_type_avenant ta ON ta.id = fp.type_avenant_id
        LEFT JOIN (
          SELECT exercice, ROUND(SUM(sinistres_payes) / NULLIF(SUM(prime_acquise), 0) * 100, 1) AS sp_pct
          FROM mv_sp_portefeuille GROUP BY exercice
@@ -62,6 +65,28 @@ export class ChiffreAffairesService {
     );
   }
 
+  // Cahier §3.2 "Structure du Portefeuille — Canal → Polices" : donut à 2
+  // anneaux (interne = canaux, externe = polices). Renvoie le détail
+  // police par police pour que le frontend construise l'anneau externe —
+  // l'anneau interne (canaux) se déduit en sommant par canal côté client,
+  // déjà cohérent avec getParCanal.
+  async getStructurePortefeuille(exercice: number) {
+    return AppDataSource.query(
+      `SELECT
+         c.nom AS canal,
+         p.numero_police,
+         p.souscripteur,
+         SUM(fp.montant_emis) AS ca_police
+       FROM fait_prime fp
+       JOIN dim_police p ON p.id = fp.police_id
+       JOIN dim_canal c ON c.id = p.canal_id
+       WHERE fp.exercice = $1
+       GROUP BY c.nom, p.numero_police, p.souscripteur
+       ORDER BY c.nom, ca_police DESC`,
+      [exercice],
+    );
+  }
+
   // §3.1 : Nombre de Nouvelles Affaires (NA) vs Renouvellements (REN).
   // NA = police dont la 1ère quittance de l'exercice n'a aucun avenant
   // (type_avenant_id IS NULL, càd numeaven était NULL en source).
@@ -74,7 +99,13 @@ export class ChiffreAffairesService {
   // tombe dans l'exercice demandé, indépendamment de leur date d'émission
   // (une police échue en 2026 peut avoir été émise n'importe quelle année).
   // Taux de Renouvellement = REN / Polices Arrivées à Échéance × 100.
-  async getProduction(exercice: number) {
+  // évolution_na_pct / évolution_ren_pct : comparaison du NOMBRE de polices
+  // NA/REN vs l'exercice précédent (cahier mockup Figure 2.1) — distincte de
+  // la "Croissance Nette du Portefeuille" (variation du nombre TOTAL de
+  // polices d'un exercice à l'autre, cf. §3.1), qui répond à une question
+  // différente (le portefeuille grossit-il ?) de celle-ci (la conquête et la
+  // fidélisation progressent-elles en volume ?).
+  private async getNaRen(exercice: number) {
     const [result] = await AppDataSource.query(
       `SELECT
          COUNT(DISTINCT CASE WHEN ta.code IS NULL THEN fp.police_id END) AS nouvelles_affaires,
@@ -84,18 +115,60 @@ export class ChiffreAffairesService {
        WHERE fp.exercice = $1`,
       [exercice],
     );
+    return { nouvellesAffaires: Number(result.nouvelles_affaires), renouvellements: Number(result.renouvellements) };
+  }
+
+  async getProduction(exercice: number) {
+    const [actuel, precedent] = await Promise.all([
+      this.getNaRen(exercice),
+      this.getNaRen(exercice - 1),
+    ]);
 
     const [{ polices_echeance: policesEcheance }] = await AppDataSource.query(
       `SELECT COUNT(*) AS polices_echeance FROM dim_police WHERE EXTRACT(YEAR FROM date_echeance) = $1`,
       [exercice],
     );
 
+    const evolutionPct = (actuelle: number, precedente: number) => (
+      precedente > 0 ? Math.round(((actuelle - precedente) / precedente) * 1000) / 10 : null
+    );
+
     return {
-      ...result,
+      nouvelles_affaires: actuel.nouvellesAffaires,
+      renouvellements: actuel.renouvellements,
+      evolution_na_pct: evolutionPct(actuel.nouvellesAffaires, precedent.nouvellesAffaires),
+      evolution_ren_pct: evolutionPct(actuel.renouvellements, precedent.renouvellements),
       polices_echeance: policesEcheance,
       taux_renouvellement_pct: Number(policesEcheance) > 0
-        ? Math.round((Number(result.renouvellements) / Number(policesEcheance)) * 1000) / 10
+        ? Math.round((actuel.renouvellements / Number(policesEcheance)) * 1000) / 10
         : null,
+    };
+  }
+
+  // Équivalent individuel de NA/REN (ci-dessus), mais au niveau personne
+  // plutôt que police : combien d'ayants droit (conjoints/enfants) sont
+  // réellement entrés dans la couverture sur l'exercice, via une vraie date
+  // source (dim_assure.date_entree <- RISQUE_FAMILLE.dateentr, 96,6%
+  // renseigné). Volontairement restreint aux ayants droit : l'assuré
+  // principal (RISQUE) n'a aucun champ "date d'entrée" équivalent en
+  // source — l'assimiler à la date d'effet de sa police sous-estimerait un
+  // salarié entré en cours de contrat existant (avenant d'incorporation,
+  // non attribuable à une personne précise en source) et fabriquerait une
+  // date. Pas de métrique "nouveaux principaux" tant que ce champ n'existe
+  // pas côté RISQUE.
+  async getNouveauxAyantsDroit(exercice: number) {
+    const compte = async (ex: number) => {
+      const [{ nb }] = await AppDataSource.query(
+        `SELECT COUNT(*) AS nb FROM dim_assure
+         WHERE est_assure_principal = false AND EXTRACT(YEAR FROM date_entree) = $1`,
+        [ex],
+      );
+      return Number(nb);
+    };
+    const [actuel, precedent] = await Promise.all([compte(exercice), compte(exercice - 1)]);
+    return {
+      nouveaux_ayants_droit: actuel,
+      evolution_pct: precedent > 0 ? Math.round(((actuel - precedent) / precedent) * 1000) / 10 : null,
     };
   }
 
@@ -148,40 +221,92 @@ export class ChiffreAffairesService {
     );
   }
 
-  // §3.4 "Suffisance du Tarif" : Nombre d'assurés, taux de recours aux soins
-  // et coût moyen des soins par personne soignée, par type (adulte/enfant).
-  // NB : dim_assure.prime_annuelle vaut 0 pour toutes les lignes (bug ETL —
-  // facts.loader.ts:64 passe la prime en dur à 0, faute de source dédiée à
-  // l'extraction sinistre). Les indicateurs qui en dépendent (prime moyenne,
-  // taux de consommation du budget, budget restant) restent donc à null
-  // plutôt que d'être calculés sur une donnée fausse.
+  // §3.4 "Suffisance du Tarif" : Nombre d'assurés, taux de recours aux soins,
+  // coût moyen des soins et prime annuelle par personne, par type (adulte/enfant).
+  //
+  // dim_assure.prime_annuelle vaut 0 pour toutes les lignes (bug ETL —
+  // facts.loader.ts:64, faute de source dédiée à l'extraction sinistre) : la
+  // source ne facture jamais la prime par individu, seulement par police. La
+  // prime par tête est donc imputée en répartissant la prime nette de chaque
+  // police (fait_prime.prime_nette — l'assiette technique, hors accessoires/
+  // taxes qui ne couvrent pas le risque, cf. §3.1) à parts égales entre ses
+  // assurés, puis moyennée par type. C'est une approximation actuarielle
+  // standard en l'absence de tarification individuelle en source, pas une
+  // valeur fabriquée : chaque FCFA imputé provient d'une vraie quittance.
   async getPrimeConsommationParAssure(exercice: number) {
+    // sinistres_assure PRÉ-agrégé par assuré (1 ligne/assuré) avant jointure :
+    // un LEFT JOIN direct sur fait_sinistre dupliquerait la ligne de chaque
+    // assuré par son nombre de sinistres, et donc la prime imputée à chaque
+    // duplication (même bug de fan-out que mv_sp_portefeuille, cf. migration
+    // 1700000000005).
+    const [{ mois_ecoule: moisEcoule }] = await AppDataSource.query(
+      `SELECT COALESCE(MAX(mois), 0) AS mois_ecoule FROM fait_prime WHERE exercice = $1`,
+      [exercice],
+    );
+
     const rows = await AppDataSource.query(
       `SELECT
          a.type_assure,
-         COUNT(DISTINCT a.id) AS effectif,
-         COUNT(DISTINCT fs.assure_id) AS assures_avec_soins,
-         COALESCE(SUM(fs.montant_paye), 0) AS sinistres_payes,
-         AVG(a.prime_annuelle) AS prime_annuelle_moyenne
+         COUNT(*) AS effectif,
+         COUNT(sa.assure_id) AS assures_avec_soins,
+         COALESCE(SUM(sa.sinistres_payes), 0) AS sinistres_payes,
+         COALESCE(SUM(pp.prime_nette_police / ep.total_assures), 0) AS prime_nette_imputee
        FROM dim_assure a
        JOIN dim_police p ON p.id = a.police_id
-       LEFT JOIN fait_sinistre fs ON fs.assure_id = a.id AND fs.exercice = $1
+       JOIN (
+         SELECT police_id, COUNT(*) AS total_assures FROM dim_assure GROUP BY police_id
+       ) ep ON ep.police_id = a.police_id
+       LEFT JOIN (
+         SELECT police_id, SUM(prime_nette) AS prime_nette_police
+         FROM fait_prime WHERE exercice = $1 GROUP BY police_id
+       ) pp ON pp.police_id = a.police_id
+       LEFT JOIN (
+         SELECT assure_id, SUM(montant_paye) AS sinistres_payes
+         FROM fait_sinistre WHERE exercice = $1 GROUP BY assure_id
+       ) sa ON sa.assure_id = a.id
        WHERE EXISTS (SELECT 1 FROM fait_prime fp WHERE fp.police_id = p.id AND fp.exercice = $1)
        GROUP BY a.type_assure`,
       [exercice],
     );
 
-    const primeAnnuelleFiable = false; // cf. note ETL ci-dessus.
-    return rows.map((r: any) => ({
-      typeAssure: r.type_assure,
-      effectif: Number(r.effectif),
-      assuresAvecSoins: Number(r.assures_avec_soins),
-      tauxRecoursPct: Number(r.effectif) > 0
-        ? Math.round((Number(r.assures_avec_soins) / Number(r.effectif)) * 1000) / 10 : 0,
-      sinistresPayes: Number(r.sinistres_payes),
-      coutMoyenParPersonneSoignee: Number(r.assures_avec_soins) > 0
-        ? Math.round(Number(r.sinistres_payes) / Number(r.assures_avec_soins)) : 0,
-      primeAnnuelleMoyenne: primeAnnuelleFiable ? Number(r.prime_annuelle_moyenne) : null,
-    }));
+    // Ligne "Ensemble" recalculée depuis les totaux bruts (pas une moyenne
+    // des deux moyennes adulte/enfant, qui serait fausse si les effectifs
+    // diffèrent) — même logique que les lignes par type.
+    const totaux = rows.reduce(
+      (acc: any, r: any) => ({
+        effectif: acc.effectif + Number(r.effectif),
+        assures_avec_soins: acc.assures_avec_soins + Number(r.assures_avec_soins),
+        sinistres_payes: acc.sinistres_payes + Number(r.sinistres_payes),
+        prime_nette_imputee: acc.prime_nette_imputee + Number(r.prime_nette_imputee),
+      }),
+      { effectif: 0, assures_avec_soins: 0, sinistres_payes: 0, prime_nette_imputee: 0 },
+    );
+
+    const segments = [...rows, { type_assure: 'ensemble', ...totaux }].map((r: any) => {
+      const effectif = Number(r.effectif);
+      const sinistresPayes = Number(r.sinistres_payes);
+      const primeNetteImputee = Number(r.prime_nette_imputee);
+      const primeAnnuelleMoyenne = effectif > 0 ? primeNetteImputee / effectif : 0;
+      const consommeParTete = effectif > 0 ? sinistresPayes / effectif : 0;
+
+      return {
+        typeAssure: r.type_assure,
+        effectif,
+        assuresAvecSoins: Number(r.assures_avec_soins),
+        tauxRecoursPct: effectif > 0
+          ? Math.round((Number(r.assures_avec_soins) / effectif) * 1000) / 10 : 0,
+        sinistresPayes,
+        coutMoyenParPersonneSoignee: Number(r.assures_avec_soins) > 0
+          ? Math.round(sinistresPayes / Number(r.assures_avec_soins)) : 0,
+        primeNetteImputeeTotale: primeNetteImputee,
+        primeAnnuelleMoyenne: Math.round(primeAnnuelleMoyenne),
+        tauxConsommationBudgetPct: primeAnnuelleMoyenne > 0
+          ? Math.round((consommeParTete / primeAnnuelleMoyenne) * 1000) / 10 : null,
+        budgetRestantParPersonne: primeAnnuelleMoyenne > 0
+          ? Math.round(primeAnnuelleMoyenne - consommeParTete) : null,
+      };
+    });
+
+    return { moisEcoule: Number(moisEcoule), segments };
   }
 }

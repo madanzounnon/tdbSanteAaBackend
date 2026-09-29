@@ -23,6 +23,16 @@ export const getParCanal = async (req: Request, res: Response) => {
   }
 };
 
+export const getStructurePortefeuille = async (req: Request, res: Response) => {
+  try {
+    const exercice = Number(req.query.exercice) || new Date().getFullYear();
+    res.json(await service.getStructurePortefeuille(exercice));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur récupération structure du portefeuille' });
+  }
+};
+
 export const getProduction = async (req: Request, res: Response) => {
   try {
     const exercice = Number(req.query.exercice) || new Date().getFullYear();
@@ -60,6 +70,16 @@ export const getPrimeConsommationParAssure = async (req: Request, res: Response)
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur récupération prime & consommation par assuré' });
+  }
+};
+
+export const getNouveauxAyantsDroit = async (req: Request, res: Response) => {
+  try {
+    const exercice = Number(req.query.exercice) || new Date().getFullYear();
+    res.json(await service.getNouveauxAyantsDroit(exercice));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur récupération nouveaux ayants droit' });
   }
 };
 

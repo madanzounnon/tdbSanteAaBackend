@@ -4,6 +4,7 @@ import {
   getPolicesParStatut,
   getMontantsARegulariser,
   getSuiviParCanal,
+  getTauxRegularisationComplete,
 } from './regularisation.controller';
 
 const router = Router();
@@ -16,5 +17,7 @@ router.get('/polices-par-statut', getPolicesParStatut);
 router.get('/montants', getMontantsARegulariser);
 // GET /api/regularisation/par-canal?exercice=2025
 router.get('/par-canal', getSuiviParCanal);
+// GET /api/regularisation/taux-complete?exercice=2025 (taux d'aboutissement réel, avenants v_regularisation)
+router.get('/taux-complete', getTauxRegularisationComplete);
 
 export default router;

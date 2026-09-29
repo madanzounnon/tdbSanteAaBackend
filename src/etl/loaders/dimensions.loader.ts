@@ -10,7 +10,9 @@ import { CanalSource } from '../extractors/canal.extractor';
 import { ApporteurSource } from '../extractors/apporteur.extractor';
 import { PoliceSource } from '../extractors/police.extractor';
 import { TypeAvenantSource } from '../extractors/type-avenant.extractor';
+import { AssureSource } from '../extractors/assure.extractor';
 import { transformCanal, transformApporteur, transformPolice, transformTypeAvenant, transformCategoriePrestataire } from '../transformers/dimensions.transformer';
+import { transformTypeAssure } from '../transformers/facts.transformer';
 
 // Toutes les dimensions sont chargées en SCD1 (écrasement simple) :
 // on privilégie la valeur la plus récente, sans conserver l'historique
@@ -102,6 +104,12 @@ export async function loadPolices(sources: PoliceSource[]): Promise<number> {
     police.statutPolice = data.statutPolice;
     police.dateEffet = data.dateEffet;
     police.dateEcheance = data.dateEcheance;
+    // Cahier §6 : la clôture intervient 3 mois après l'échéance (délai
+    // d'enregistrement des factures en retard avant calcul définitif du
+    // montant à régulariser) — règle déterministe, pas de champ source.
+    const dateCloture = new Date(data.dateEcheance);
+    dateCloture.setMonth(dateCloture.getMonth() + 3);
+    police.dateCloture = dateCloture;
     police.canal = canal;
     // Apporteur commercial non garanti en source (~33% de couverture) —
     // on ne bloque pas le chargement de la police en son absence.
@@ -120,23 +128,59 @@ export async function findOrCreateAssure(
   matricule: string,
   typeAssure: Assure['typeAssure'],
   primeAnnuelle: number,
+  nom: string | null,
+  dateNaissance: Date | null,
+  sexe: string | null,
+  estAssurePrincipal: boolean,
+  lienParente: string | null = null,
+  dateEntree: Date | null = null,
 ): Promise<Assure> {
   const repo = AppDataSource.getRepository(Assure);
-  // Le matricule sert de clé naturelle côté source, mais n'est volontairement
-  // pas stocké tel quel dans dim_assure (anonymisation) — seul le rattachement
-  // police + type suffit aux agrégats du cahier (§3.4).
+  // Clé naturelle = (police, matricule) : une ligne par individu réel (cf.
+  // migration 1700000000009, qui a fait évoluer dim_assure depuis un ancien
+  // regroupement par (police, type) sans identité). nom/dateNaissance/sexe
+  // réécrits à chaque passage (SCD1, comme les autres dimensions) pour
+  // absorber une correction en source.
   let assure = await repo
     .createQueryBuilder('a')
     .where('a.police_id = :policeId', { policeId })
-    .andWhere('a.type_assure = :typeAssure', { typeAssure })
+    .andWhere('a.matricule = :matricule', { matricule })
     .getOne();
 
   if (!assure) {
-    assure = repo.create({ typeAssure, primeAnnuelle });
+    assure = repo.create({ matricule, typeAssure, primeAnnuelle });
     assure.police = { id: policeId } as Police;
-    assure = await repo.save(assure);
   }
+  assure.typeAssure = typeAssure;
+  assure.nom = nom;
+  assure.dateNaissance = dateNaissance;
+  assure.sexe = sexe;
+  assure.estAssurePrincipal = estAssurePrincipal;
+  assure.lienParente = lienParente;
+  assure.dateEntree = dateEntree;
+  assure = await repo.save(assure);
   return assure;
+}
+
+// Charge le roster complet (extractAssures) — voie PRINCIPALE de peuplement
+// de dim_assure, indépendante des sinistres (cf. commentaire de
+// assure.extractor.ts). findOrCreateAssure reste appelée depuis
+// loadSinistres comme filet de sécurité pour un matricule non résolu ici
+// (ex. RISQUE_FAMILLE incomplet), mais ne devrait plus être la source
+// principale d'effectif après ce chargement.
+export async function loadAssures(sources: AssureSource[]): Promise<number> {
+  let loaded = 0;
+  for (const source of sources) {
+    const policeId = await getPoliceIdByNumero(source.numero_police);
+    if (!policeId) continue;
+    await findOrCreateAssure(
+      policeId, source.matricule, transformTypeAssure(source.lien_parente), 0,
+      source.nom, source.date_naissance, source.sexe,
+      source.est_assure_principal === 1, source.lien_parente, source.date_entree,
+    );
+    loaded++;
+  }
+  return loaded;
 }
 
 export async function findOrCreatePrestataire(nom: string, categorieSource: string): Promise<Prestataire> {

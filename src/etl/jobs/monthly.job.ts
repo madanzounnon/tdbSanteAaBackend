@@ -7,7 +7,8 @@ import { extractTypesAvenant } from '../extractors/type-avenant.extractor';
 import { extractPolices } from '../extractors/police.extractor';
 import { extractPrimes } from '../extractors/prime.extractor';
 import { extractSinistres } from '../extractors/sinistre.extractor';
-import { loadCanaux, loadApporteurs, loadTypesAvenant, loadPolices } from '../loaders/dimensions.loader';
+import { extractAssures } from '../extractors/assure.extractor';
+import { loadCanaux, loadApporteurs, loadTypesAvenant, loadPolices, loadAssures } from '../loaders/dimensions.loader';
 import { loadPrimes, loadSinistres } from '../loaders/facts.loader';
 
 const JOB_NAME = 'monthly_ca_sinistralite';
@@ -34,6 +35,14 @@ export async function runMonthlyJob(): Promise<void> {
     const polices = await extractPolices(since);
     const policesLoaded = await loadPolices(polices);
 
+    // Roster complet des bénéficiaires (RISQUE + RISQUE_FAMILLE), toujours en
+    // refresh complet — aucune colonne de suivi de modification fiable sur
+    // RISQUE_FAMILLE (cf. assure.extractor.ts). Chargé avant les sinistres
+    // pour que findOrCreateAssure (loadSinistres) retrouve déjà l'identité
+    // réelle au lieu de créer une ligne minimale.
+    const assures = await extractAssures();
+    const assuresLoaded = await loadAssures(assures);
+
     const primes = await extractPrimes(since);
     const primesLoaded = await loadPrimes(primes);
 
@@ -44,8 +53,8 @@ export async function runMonthlyJob(): Promise<void> {
     // du cahier — un seul point de calcul, toujours à jour après charge.
     await AppDataSource.query('REFRESH MATERIALIZED VIEW mv_sp_portefeuille');
 
-    const totalExtracted = polices.length + primes.length + sinistres.length;
-    const totalLoaded = policesLoaded + primesLoaded + sinistresLoaded;
+    const totalExtracted = polices.length + assures.length + primes.length + sinistres.length;
+    const totalLoaded = policesLoaded + assuresLoaded + primesLoaded + sinistresLoaded;
     await logger.success(totalExtracted, totalLoaded);
   } catch (err) {
     await logger.failure(err);

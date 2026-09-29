@@ -44,27 +44,50 @@ export class SinistraliteService {
   // est donc une référence obligatoire, jamais une série isolée. Renvoie
   // les 12 mois (generate_series) pour un axe complet même quand l'exercice
   // en cours n'est pas terminé.
+  //
+  // Prime du dénominateur = prime ANNUELLE / 12 (lissée), jamais la prime
+  // émise CE mois-là : les primes s'émettent par gros paquets (renouvellements
+  // groupés en début d'exercice), donc un mois donné peut porter des mois de
+  // prime ou presque aucune — un S/P "du mois" calculé sur la prime émise ce
+  // mois-là est incohérent (vérifié : valeurs de 0,2% à 3,5% au lieu de
+  // dizaines de %). Même principe que prime_acquise dans mv_sp_portefeuille,
+  // mais au pas mensuel plutôt que YTD.
+  //
+  // sinistre_mensuel pré-agrégé par (exercice, mois) AVANT toute jointure :
+  // un LEFT JOIN direct fait_sinistre-fait_prime sur (police_id, mois)
+  // multiplierait les sinistres par le nombre de quittances du mois pour
+  // cette police (fan-out, même classe de bug que mv_sp_portefeuille).
+  //
+  // sp_actuel_pct reste NULL au-delà du dernier mois avec une quittance
+  // (mois_ecoule) : sinon un mois futur sans sinistre afficherait 0% au lieu
+  // de "pas encore atteint", cassant le marqueur "arrêté" côté frontend.
   async getSpMensuel(exercice: number) {
     return AppDataSource.query(
-      `SELECT
+      `WITH mois_ecoule AS (
+         SELECT COALESCE(MAX(mois), 0) AS m FROM fait_prime WHERE exercice = $1
+       ),
+       prime_mensuelle AS (
+         SELECT exercice, SUM(montant_emis) / 12.0 AS prime
+         FROM fait_prime WHERE exercice IN ($1, $1 - 1)
+         GROUP BY exercice
+       ),
+       sinistre_mensuel AS (
+         SELECT exercice, mois, SUM(montant_paye) AS sinistre
+         FROM fait_sinistre WHERE exercice IN ($1, $1 - 1)
+         GROUP BY exercice, mois
+       )
+       SELECT
          m.mois,
-         ROUND(actuel.sinistre / NULLIF(actuel.prime, 0) * 100, 1) AS sp_actuel_pct,
-         ROUND(precedent.sinistre / NULLIF(precedent.prime, 0) * 100, 1) AS sp_precedent_pct
+         CASE WHEN m.mois <= me.m
+           THEN ROUND(COALESCE(sa.sinistre, 0) / NULLIF(pa.prime, 0) * 100, 1)
+         END AS sp_actuel_pct,
+         ROUND(COALESCE(sp.sinistre, 0) / NULLIF(pp.prime, 0) * 100, 1) AS sp_precedent_pct
        FROM generate_series(1, 12) AS m(mois)
-       LEFT JOIN (
-         SELECT fp.mois, SUM(fp.montant_emis) AS prime, COALESCE(SUM(fs.montant_paye), 0) AS sinistre
-         FROM fait_prime fp
-         LEFT JOIN fait_sinistre fs ON fs.police_id = fp.police_id AND fs.exercice = fp.exercice AND fs.mois = fp.mois
-         WHERE fp.exercice = $1
-         GROUP BY fp.mois
-       ) actuel ON actuel.mois = m.mois
-       LEFT JOIN (
-         SELECT fp.mois, SUM(fp.montant_emis) AS prime, COALESCE(SUM(fs.montant_paye), 0) AS sinistre
-         FROM fait_prime fp
-         LEFT JOIN fait_sinistre fs ON fs.police_id = fp.police_id AND fs.exercice = fp.exercice AND fs.mois = fp.mois
-         WHERE fp.exercice = $1 - 1
-         GROUP BY fp.mois
-       ) precedent ON precedent.mois = m.mois
+       CROSS JOIN mois_ecoule me
+       LEFT JOIN prime_mensuelle pa ON pa.exercice = $1
+       LEFT JOIN prime_mensuelle pp ON pp.exercice = $1 - 1
+       LEFT JOIN sinistre_mensuel sa ON sa.exercice = $1 AND sa.mois = m.mois
+       LEFT JOIN sinistre_mensuel sp ON sp.exercice = $1 - 1 AND sp.mois = m.mois
        ORDER BY m.mois`,
       [exercice],
     );

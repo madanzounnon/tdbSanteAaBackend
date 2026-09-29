@@ -23,6 +23,16 @@ export const getPolicesParStatut = async (req: Request, res: Response) => {
   }
 };
 
+export const getTauxRegularisationComplete = async (req: Request, res: Response) => {
+  try {
+    const exercice = Number(req.query.exercice) || new Date().getFullYear();
+    res.json(await service.getTauxRegularisationComplete(exercice));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur récupération taux de régularisation complété' });
+  }
+};
+
 export const getMontantsARegulariser = async (req: Request, res: Response) => {
   try {
     const exercice = Number(req.query.exercice) || new Date().getFullYear();
