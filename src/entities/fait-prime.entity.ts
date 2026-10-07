@@ -39,6 +39,13 @@ export class FaitPrime {
   @Column({ name: 'date_avenant', type: 'date', nullable: true })
   dateAvenant: Date | null;
 
+  // Fin de la période couverte par la quittance (QUITTANCE.dateeche) :
+  // [date, date_echeance] sert à répartir la prime entre exercices au
+  // prorata des jours couverts (mv_sp_portefeuille). Nullable : quittances
+  // chargées avant l'ajout de la colonne et non encore reprises.
+  @Column({ name: 'date_echeance', type: 'date', nullable: true })
+  dateEcheance: Date | null;
+
   @Column({ type: 'int' })
   exercice: number;
 

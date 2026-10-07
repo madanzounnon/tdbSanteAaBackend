@@ -1,21 +1,45 @@
 import { AppDataSource } from '../../data-source';
+import { dateArrete, debutExercice, finExercice, moisEcoule } from '../commun/periode';
 
+// CHIFFRE D'AFFAIRES = PRIMES ÉMISES de l'exercice (quittances rattachées à
+// l'année de leur DATE D'EFFET) — même base que le CA encaissé et le taux de
+// recouvrement (encaissé / émis), choix métier du 2026-10-05.
+//
+// Le CA ACQUIS (primes acquises, au prorata des jours couverts) n'est
+// affiché que dans la carte "Chiffre d'Affaires acquis" (getKpis) :
+//   CA acquis N = Primes émises N + PPNA au 01/01/N − PPNA au 31/12/N
+// via les fonctions SQL prime_acquise / ppna (migration 1700000000017). Il
+// reste la base de la sinistralité (mv_sp_portefeuille) et de la
+// rentabilité technique.
 export class ChiffreAffairesService {
   async getKpis(exercice: number) {
     const [result] = await AppDataSource.query(
-      `SELECT
-         SUM(fp.montant_emis) AS ca_ytd,
-         SUM(fp.montant_encaisse) AS ca_encaisse_ytd,
-         ROUND(SUM(fp.montant_encaisse) / NULLIF(SUM(fp.montant_emis), 0) * 100, 1) AS taux_recouvrement,
-         COUNT(DISTINCT fp.police_id) AS nombre_polices,
-         SUM(fp.commission_versee) AS commissions_versees,
-         ROUND(SUM(fp.commission_versee) / NULLIF(SUM(fp.montant_emis), 0) * 100, 1) AS taux_commission_pct,
-         oa.montant_ca_objectif AS objectif_ca
-       FROM fait_prime fp
-       LEFT JOIN objectif_annuel oa ON oa.exercice = fp.exercice
-       WHERE fp.exercice = $1
-       GROUP BY oa.montant_ca_objectif`,
-      [exercice],
+      `WITH emis AS (
+         SELECT
+           COALESCE(SUM(montant_emis), 0) AS primes_emises,
+           COALESCE(SUM(montant_encaisse), 0) AS encaisse,
+           COALESCE(SUM(commission_versee), 0) AS commissions,
+           COUNT(DISTINCT police_id) AS nombre_polices
+         FROM fait_prime WHERE exercice = $1
+       )
+       SELECT
+         emis.primes_emises AS ca_ytd,
+         emis.encaisse AS ca_encaisse_ytd,
+         ROUND(emis.encaisse / NULLIF(emis.primes_emises, 0) * 100, 1) AS taux_recouvrement,
+         emis.nombre_polices,
+         emis.commissions AS commissions_versees,
+         ROUND(emis.commissions / NULLIF(emis.primes_emises, 0) * 100, 1) AS taux_commission_pct,
+         (SELECT montant_ca_objectif FROM objectif_annuel WHERE exercice = $1) AS objectif_ca,
+         -- Carte "CA acquis" : décomposition de la formule sur l'exercice
+         -- complet (provisoire pour l'exercice en cours) + CA acquis à date.
+         emis.primes_emises,
+         ROUND(ppna(($2::date - 1)), 2) AS ppna_ouverture,
+         ROUND(ppna($4::date), 2) AS ppna_cloture,
+         (SELECT ROUND(COALESCE(SUM(montant), 0), 2) FROM prime_acquise($2::date, $4::date)) AS ca_acquis_exercice,
+         (SELECT ROUND(COALESCE(SUM(montant), 0), 2) FROM prime_acquise($2::date, $3::date)) AS ca_acquis_ytd,
+         $3::text AS date_arrete
+       FROM emis`,
+      [exercice, debutExercice(exercice), dateArrete(exercice), finExercice(exercice)],
     );
     return result || null;
   }
@@ -54,7 +78,7 @@ export class ChiffreAffairesService {
          c.nom AS canal,
          c.type_canal,
          SUM(fp.montant_emis) AS ca_canal,
-         ROUND(SUM(fp.montant_emis) * 100.0 / SUM(SUM(fp.montant_emis)) OVER (), 1) AS part_marche_pct
+         ROUND(SUM(fp.montant_emis) * 100.0 / NULLIF(SUM(SUM(fp.montant_emis)) OVER (), 0), 1) AS part_marche_pct
        FROM fait_prime fp
        JOIN dim_police p ON p.id = fp.police_id
        JOIN dim_canal c ON c.id = p.canal_id
@@ -172,7 +196,7 @@ export class ChiffreAffairesService {
     };
   }
 
-  // Tranche calculée sur la prime de l'exercice (SUM(fait_prime.montant_emis)),
+  // Tranche calculée sur la prime émise de l'exercice (SUM(fait_prime.montant_emis)),
   // jamais une valeur figée sur dim_police — une police change de tranche
   // d'un exercice à l'autre selon sa prime réelle sur la période. Seuils
   // repris du cahier §3.4. Le statut S/P (mv_sp_portefeuille) est joint pour
@@ -211,7 +235,8 @@ export class ChiffreAffairesService {
     );
   }
 
-  // §3.1 : CA mensuel de l'exercice (Jan.-Déc.).
+  // §3.1 : CA mensuel de l'exercice (Jan.-Déc.) = primes émises par mois
+  // d'effet.
   async getCaMensuel(exercice: number) {
     return AppDataSource.query(
       `SELECT mois, SUM(montant_emis) AS ca
@@ -239,11 +264,8 @@ export class ChiffreAffairesService {
     // assuré par son nombre de sinistres, et donc la prime imputée à chaque
     // duplication (même bug de fan-out que mv_sp_portefeuille, cf. migration
     // 1700000000005).
-    const [{ mois_ecoule: moisEcoule }] = await AppDataSource.query(
-      `SELECT COALESCE(MAX(mois), 0) AS mois_ecoule FROM fait_prime WHERE exercice = $1`,
-      [exercice],
-    );
-
+    // Prime annuelle par tête = prime nette ACQUISE sur l'exercice complet
+    // (répartie au prorata des jours couverts, comme le CA).
     const rows = await AppDataSource.query(
       `SELECT
          a.type_assure,
@@ -258,13 +280,13 @@ export class ChiffreAffairesService {
        ) ep ON ep.police_id = a.police_id
        LEFT JOIN (
          SELECT police_id, SUM(prime_nette) AS prime_nette_police
-         FROM fait_prime WHERE exercice = $1 GROUP BY police_id
+         FROM prime_acquise(make_date($1::int, 1, 1), make_date($1::int, 12, 31)) GROUP BY police_id
        ) pp ON pp.police_id = a.police_id
        LEFT JOIN (
          SELECT assure_id, SUM(montant_paye) AS sinistres_payes
          FROM fait_sinistre WHERE exercice = $1 GROUP BY assure_id
        ) sa ON sa.assure_id = a.id
-       WHERE EXISTS (SELECT 1 FROM fait_prime fp WHERE fp.police_id = p.id AND fp.exercice = $1)
+       WHERE EXISTS (SELECT 1 FROM mv_sp_portefeuille mv WHERE mv.police_id = p.id AND mv.exercice = $1 AND mv.prime_emise <> 0)
        GROUP BY a.type_assure`,
       [exercice],
     );
@@ -307,6 +329,6 @@ export class ChiffreAffairesService {
       };
     });
 
-    return { moisEcoule: Number(moisEcoule), segments };
+    return { moisEcoule: moisEcoule(exercice), segments };
   }
 }

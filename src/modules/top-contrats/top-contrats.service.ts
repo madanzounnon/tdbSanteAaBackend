@@ -16,11 +16,11 @@ function actionRecommandee(statutRisque: string, statutPolice: string): string {
 
 export class TopContratsService {
   async getTopParPrime(exercice: number, limite = 10) {
-    // prime_emise = SUM(fait_prime.montant_emis) pour la police sur
-    // l'exercice (déjà agrégée dans mv_sp_portefeuille) — jamais
-    // dim_police.prime_annuelle, qui est une valeur figée au chargement et
-    // ne reflète pas les multiples mouvements de prime d'une police
-    // (nouvelle affaire, renouvellement, avenants, ristournes...).
+    // Classement par PRIME DE L'EXERCICE (prime_exercice = part des
+    // quittances couvrant l'exercice, au prorata des jours, base du S/P
+    // global). prime_emise (quittances dont la date d'effet tombe dans
+    // l'exercice) reste renvoyée pour information. prime_acquise /
+    // sinistres_payes expliquent le S/P linéaire.
     return AppDataSource.query(
       `SELECT
          p.numero_police,
@@ -28,13 +28,20 @@ export class TopContratsService {
          p.statut_souscripteur,
          p.statut_police,
          c.nom AS canal,
-         mv.prime_emise,
+         COALESCE(pe.primes_emises, 0) AS prime_emise,
+         mv.prime_emise AS prime_exercice,
          mv.sp_emis_pct AS sp_global,
          mv.sp_acquis_pct AS sp_lineaire,
+         mv.prime_acquise,
+         mv.sinistres_payes,
          mv.statut_risque
        FROM mv_sp_portefeuille mv
        JOIN dim_police p ON p.id = mv.police_id
        JOIN dim_canal c ON c.id = p.canal_id
+       LEFT JOIN (
+         SELECT police_id, SUM(montant_emis) AS primes_emises
+         FROM fait_prime WHERE exercice = $1 GROUP BY police_id
+       ) pe ON pe.police_id = mv.police_id
        WHERE mv.exercice = $1
        ORDER BY mv.prime_emise DESC
        LIMIT $2`,
@@ -51,12 +58,20 @@ export class TopContratsService {
          p.souscripteur,
          p.statut_police,
          c.nom AS canal,
+         COALESCE(pe.primes_emises, 0) AS prime_emise,
+         mv.prime_emise AS prime_exercice,
          mv.sp_emis_pct AS sp_global,
          mv.sp_acquis_pct AS sp_lineaire,
+         mv.prime_acquise,
+         mv.sinistres_payes,
          mv.statut_risque
        FROM mv_sp_portefeuille mv
        JOIN dim_police p ON p.id = mv.police_id
        JOIN dim_canal c ON c.id = p.canal_id
+       LEFT JOIN (
+         SELECT police_id, SUM(montant_emis) AS primes_emises
+         FROM fait_prime WHERE exercice = $1 GROUP BY police_id
+       ) pe ON pe.police_id = mv.police_id
        WHERE mv.exercice = $1
        ORDER BY mv.sp_acquis_pct DESC NULLS LAST
        LIMIT $2`,
@@ -81,6 +96,7 @@ export class TopContratsService {
          mv.sinistres_payes,
          mv.sp_emis_pct AS sp_global,
          mv.sp_acquis_pct AS sp_lineaire,
+         mv.prime_acquise,
          mv.statut_risque
        FROM dim_police p
        JOIN dim_canal c ON c.id = p.canal_id

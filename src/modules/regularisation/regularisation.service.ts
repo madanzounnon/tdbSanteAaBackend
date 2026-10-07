@@ -1,20 +1,50 @@
 import { AppDataSource } from '../../data-source';
 
 export class RegularisationService {
-  async getPolicesCritiques(exercice: number) {
-    return AppDataSource.query(
+  // Liste paginée (tri S/P décroissant) : { donnees, total, page, taille, pages }.
+  async getPolicesCritiques(exercice: number, page = 1, taille = 15) {
+    const rows: any[] = await AppDataSource.query(
       `SELECT
-         numero_police,
-         prime_emise AS prime_annuelle,
-         sinistres_payes AS consommation,
-         sp_emis_pct AS sp_global,
-         statut_risque,
-         statut_police
-       FROM mv_sp_portefeuille
-       WHERE exercice = $1 AND statut_risque IN ('critique', 'perte_seche')
-       ORDER BY sp_emis_pct DESC`,
-      [exercice],
+         COUNT(*) OVER()::int AS total_lignes,
+         mv.numero_police,
+         p.souscripteur,
+         -- prime_annuelle = prime DE L'EXERCICE (part des quittances couvrant
+         -- l'exercice, au prorata des jours) : base du S/P global.
+         -- primes_emises = quittances dont la date d'effet tombe dans
+         -- l'exercice (base du chiffre d'affaires), pour comparaison.
+         mv.prime_emise AS prime_annuelle,
+         COALESCE(pe.primes_emises, 0) AS primes_emises,
+         mv.sinistres_payes AS consommation,
+         mv.sp_emis_pct AS sp_global,
+         mv.statut_risque,
+         mv.statut_police
+       FROM mv_sp_portefeuille mv
+       JOIN dim_police p ON p.id = mv.police_id
+       LEFT JOIN (
+         SELECT police_id, SUM(montant_emis) AS primes_emises
+         FROM fait_prime WHERE exercice = $1 GROUP BY police_id
+       ) pe ON pe.police_id = mv.police_id
+       WHERE mv.exercice = $1 AND mv.statut_risque IN ('critique', 'perte_seche')
+       ORDER BY mv.sp_emis_pct DESC, mv.numero_police
+       LIMIT $2 OFFSET $3`,
+      [exercice, taille, (page - 1) * taille],
     );
+    let total = rows[0]?.total_lignes ?? 0;
+    if (!rows.length && page > 1) {
+      const [{ n }] = await AppDataSource.query(
+        `SELECT COUNT(*)::int AS n FROM mv_sp_portefeuille
+         WHERE exercice = $1 AND statut_risque IN ('critique', 'perte_seche')`,
+        [exercice],
+      );
+      total = n;
+    }
+    return {
+      donnees: rows.map(({ total_lignes, ...r }) => r),
+      total,
+      page,
+      taille,
+      pages: Math.max(1, Math.ceil(total / taille)),
+    };
   }
 
   // Distingue les polices déjà échues (S/P figé, régularisation à engager
@@ -73,6 +103,7 @@ export class RegularisationService {
            WHERE EXISTS (
              SELECT 1 FROM v_regularisation r
              WHERE r.police_id = mv.police_id AND r.exercice = mv.exercice
+               AND r.montant_a_regulariser > 0
            )
          ) AS regularisees
        FROM mv_sp_portefeuille mv
@@ -88,33 +119,53 @@ export class RegularisationService {
     };
   }
 
+  // Les avenants d'ajustement de prime (nature J) vont dans les deux sens :
+  //  - SUPPLÉMENT (montant > 0) : complément de prime dû par le client —
+  //    seul cas "à encaisser" ;
+  //  - RISTOURNE (montant < 0) : trop-perçu à rembourser au client ; le
+  //    "montant encaissé" ORASS de ces quittances est le règlement de la
+  //    ristourne, PAS une rentrée d'argent.
+  // Les additionner donnait un "à encaisser" négatif (2026 : 17,7 M de
+  // suppléments − 86,8 M de ristournes = −69,1 M) et comptait les
+  // ristournes réglées comme de l'encaissé. Suivis séparés désormais.
   async getMontantsARegulariser(exercice: number) {
     const [result] = await AppDataSource.query(
       `SELECT
-         SUM(montant_a_regulariser) AS montant_total_a_regulariser,
-         SUM(montant_encaisse) AS deja_encaisse,
-         SUM(montant_a_regulariser) - SUM(montant_encaisse) AS reste_a_recouvrer,
-         ROUND(SUM(montant_encaisse) / NULLIF(SUM(montant_a_regulariser), 0) * 100, 1) AS taux_encaissement_pct
+         COALESCE(SUM(montant_a_regulariser) FILTER (WHERE montant_a_regulariser > 0), 0) AS montant_total_a_regulariser,
+         COALESCE(SUM(montant_encaisse) FILTER (WHERE montant_a_regulariser > 0), 0) AS deja_encaisse,
+         COALESCE(SUM(montant_a_regulariser - montant_encaisse) FILTER (WHERE montant_a_regulariser > 0), 0) AS reste_a_recouvrer,
+         ROUND(SUM(montant_encaisse) FILTER (WHERE montant_a_regulariser > 0)
+               / NULLIF(SUM(montant_a_regulariser) FILTER (WHERE montant_a_regulariser > 0), 0) * 100, 1) AS taux_encaissement_pct,
+         COUNT(*) FILTER (WHERE montant_a_regulariser > 0) AS nb_supplements,
+         COUNT(*) FILTER (WHERE montant_a_regulariser < 0) AS nb_ristournes,
+         COALESCE(-SUM(montant_a_regulariser) FILTER (WHERE montant_a_regulariser < 0), 0) AS ristournes_total,
+         COALESCE(SUM(LEAST(ABS(montant_encaisse), -montant_a_regulariser)) FILTER (WHERE montant_a_regulariser < 0), 0) AS ristournes_reglees
        FROM v_regularisation WHERE exercice = $1`,
       [exercice],
     );
-    return result;
+    return {
+      ...result,
+      ristournes_restantes: Number(result.ristournes_total) - Number(result.ristournes_reglees),
+    };
   }
 
   async getSuiviParCanal(exercice: number) {
     return AppDataSource.query(
       `SELECT
          c.nom AS canal,
-         COUNT(*) AS nb,
-         SUM(r.montant_a_regulariser) AS a_encaisser,
-         SUM(r.montant_encaisse) AS encaisse,
-         SUM(r.montant_a_regulariser) - SUM(r.montant_encaisse) AS reste,
-         ROUND(SUM(r.montant_encaisse) / NULLIF(SUM(r.montant_a_regulariser), 0) * 100, 1) AS taux_pct
+         COUNT(*) FILTER (WHERE r.montant_a_regulariser > 0) AS nb,
+         COALESCE(SUM(r.montant_a_regulariser) FILTER (WHERE r.montant_a_regulariser > 0), 0) AS a_encaisser,
+         COALESCE(SUM(r.montant_encaisse) FILTER (WHERE r.montant_a_regulariser > 0), 0) AS encaisse,
+         COALESCE(SUM(r.montant_a_regulariser - r.montant_encaisse) FILTER (WHERE r.montant_a_regulariser > 0), 0) AS reste,
+         ROUND(SUM(r.montant_encaisse) FILTER (WHERE r.montant_a_regulariser > 0)
+               / NULLIF(SUM(r.montant_a_regulariser) FILTER (WHERE r.montant_a_regulariser > 0), 0) * 100, 1) AS taux_pct,
+         COUNT(*) FILTER (WHERE r.montant_a_regulariser < 0) AS nb_ristournes,
+         COALESCE(-SUM(r.montant_a_regulariser) FILTER (WHERE r.montant_a_regulariser < 0), 0) AS ristournes
        FROM v_regularisation r
        JOIN dim_canal c ON c.id = r.canal_id
        WHERE r.exercice = $1
        GROUP BY c.nom
-       ORDER BY reste DESC`,
+       ORDER BY reste DESC, ristournes DESC`,
       [exercice],
     );
   }

@@ -16,19 +16,40 @@ export function transformTypeAssure(lienParente: string | null): TypeAssure {
 // catégories du cahier d'indicateurs. Correspondances évidentes seulement ;
 // AM/AMI/AS/DF/EV/EVSN/PO/RE/TR n'ont pas d'équivalent clair et tombent en
 // Consultation par défaut — cf. liste des ambiguïtés transmise.
+// Mapping vérifié contre FAMILLE_PRESTATION.LIBFAMPR (libellés réels
+// source, pas une supposition) :
+//   AM  "Soins médicaux ambulatoires"      -> Consultation (soins courants)
+//   AMI "Soins préventifs"                 -> Consultation (bilans/check-ups)
+//   RE  "Auxiliaires médicaux"             -> Consultation (paramédical)
+//   EV  "Évacuation Sanitaire et Assistance" -> Hospitalisation (admission)
+//   EVSN "Évacuation sanitaire (EVASAN)"   -> Hospitalisation (idem, précis)
+//   TR  "Transport médicalisé"             -> Hospitalisation (lié à admission)
+// AS "Assistance", DF "Divers", PO "Prothèses hors dentaires" : le libellé
+// SOURCE lui-même ne les rattache à aucun soin médical précis (vérifié,
+// pas un trou de mapping de notre côté) -> 9e catégorie "Autres" plutôt
+// que fondus à tort dans Consultation.
 export function transformNatureActe(source: string): NatureActe {
   const mapping: Record<string, NatureActe> = {
     HO: NatureActe.HOSPITALISATION,
+    EV: NatureActe.HOSPITALISATION,
+    EVSN: NatureActe.HOSPITALISATION,
+    TR: NatureActe.HOSPITALISATION,
     C: NatureActe.CONSULTATION,
     V: NatureActe.CONSULTATION,
+    AM: NatureActe.CONSULTATION,
+    AMI: NatureActe.CONSULTATION,
+    RE: NatureActe.CONSULTATION,
     PH: NatureActe.PHARMACIE,
     OP: NatureActe.OPTIQUE,
     D: NatureActe.DENTAIRE,
     MA: NatureActe.MATERNITE,
     B: NatureActe.BIOLOGIE,
     Z: NatureActe.IMAGERIE,
+    AS: NatureActe.AUTRES,
+    DF: NatureActe.AUTRES,
+    PO: NatureActe.AUTRES,
   };
-  return mapping[source.trim().toUpperCase()] ?? NatureActe.CONSULTATION;
+  return mapping[source.trim().toUpperCase()] ?? NatureActe.AUTRES;
 }
 
 // Le statut de facture (attente/retard/réglée) est recalculé côté ETL

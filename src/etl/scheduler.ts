@@ -4,6 +4,8 @@ import { AppDataSource } from '../data-source';
 import { runDailyJob } from './jobs/daily.job';
 import { runMonthlyJob } from './jobs/monthly.job';
 import { runQuarterlyJob } from './jobs/quarterly.job';
+import { runLbcJob } from './jobs/lbc.job';
+import { runEncaissementsJob } from './jobs/encaissements.job';
 
 // Process persistant unique qui planifie les 3 fréquences du §8.1.
 // Alternative possible : ne pas garder ce process en vie et laisser
@@ -20,6 +22,25 @@ async function main() {
       await runDailyJob();
     } catch (err) {
       console.error('[ETL] Échec job quotidien', err);
+    }
+  });
+
+  // Quotidien à 2h15 — détail des encaissements Santé (page Encaissements).
+  cron.schedule('15 2 * * *', async () => {
+    try {
+      await runEncaissementsJob();
+    } catch (err) {
+      console.error('[ETL] Échec job encaissements', err);
+    }
+  });
+
+  // Quotidien à 2h30 — transactions toutes branches pour la détection
+  // anti-blanchiment (module LBC/FT).
+  cron.schedule('30 2 * * *', async () => {
+    try {
+      await runLbcJob();
+    } catch (err) {
+      console.error('[ETL] Échec job LBC', err);
     }
   });
 

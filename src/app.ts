@@ -8,6 +8,8 @@ import prestatairesRoutes from './modules/prestataires/prestataires.routes';
 import regularisationRoutes from './modules/regularisation/regularisation.routes';
 import topContratsRoutes from './modules/top-contrats/top-contrats.routes';
 import objectifsRoutes from './modules/objectifs/objectifs.routes';
+import encaissementsRoutes from './modules/encaissements/encaissements.routes';
+import lbcRoutes from './modules/lbc/lbc.routes';
 
 export const createApp = () => {
   const app = express();
@@ -24,6 +26,9 @@ export const createApp = () => {
   app.use('/api/regularisation', regularisationRoutes);
   app.use('/api/top-contrats', topContratsRoutes);
   app.use('/api/objectifs', objectifsRoutes);
+  app.use('/api/encaissements', encaissementsRoutes);
+  // Module anti-blanchiment (LBC/FT) — toutes branches, hors cahier Santé.
+  app.use('/api/lbc', lbcRoutes);
 
   app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 

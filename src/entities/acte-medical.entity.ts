@@ -10,6 +10,12 @@ export enum NatureActe {
   MATERNITE = 'maternite',
   BIOLOGIE = 'biologie',
   IMAGERIE = 'imagerie',
+  // 9e catégorie hors les 8 du cahier §4.3 : regroupe les codes ORASS dont
+  // le libellé source lui-même ne rattache à aucun soin médical précis
+  // (AS "Assistance", DF "Divers", PO "Prothèses hors dentaires" — vérifié
+  // via FAMILLE_PRESTATION.LIBFAMPR, pas une ambiguïté de mapping de notre
+  // côté : la source ne les catégorise pas plus finement non plus).
+  AUTRES = 'autres',
 }
 
 @Entity('dim_acte_medical')

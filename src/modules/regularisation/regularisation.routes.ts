@@ -9,7 +9,7 @@ import {
 
 const router = Router();
 
-// GET /api/regularisation/polices-critiques?exercice=2025
+// GET /api/regularisation/polices-critiques?exercice=2025&page=1&taille=15
 router.get('/polices-critiques', getPolicesCritiques);
 // GET /api/regularisation/polices-par-statut?exercice=2025 (échues à régulariser vs actives déjà critiques)
 router.get('/polices-par-statut', getPolicesParStatut);

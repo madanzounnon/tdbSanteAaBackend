@@ -13,6 +13,7 @@ import { TypeAvenantSource } from '../extractors/type-avenant.extractor';
 import { AssureSource } from '../extractors/assure.extractor';
 import { transformCanal, transformApporteur, transformPolice, transformTypeAvenant, transformCategoriePrestataire } from '../transformers/dimensions.transformer';
 import { transformTypeAssure } from '../transformers/facts.transformer';
+import { estPoliceExclue } from '../config/polices-exclues';
 
 // Toutes les dimensions sont chargées en SCD1 (écrasement simple) :
 // on privilégie la valeur la plus récente, sans conserver l'historique
@@ -88,6 +89,8 @@ export async function loadPolices(sources: PoliceSource[]): Promise<number> {
   let loaded = 0;
   for (const source of sources) {
     const data = transformPolice(source);
+    // Polices de test : jamais chargées (cf. polices-exclues.ts).
+    if (estPoliceExclue(data.numeroPolice)) continue;
     const canal = canauxCache.get(data.codeApporteur);
     if (!canal) {
       console.warn(`[ETL] Canal introuvable pour la police ${data.numeroPolice} (code ${data.codeApporteur}) — ligne ignorée`);

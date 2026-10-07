@@ -1,4 +1,18 @@
 import { AppDataSource } from '../../data-source';
+import { ChiffreAffairesService } from '../chiffre-affaires/chiffre-affaires.service';
+import { dateArrete, debutExercice, finExercice, memeDateAnneePrecedente, moisEcoule as moisEcouleExercice } from '../commun/periode';
+
+const caService = new ChiffreAffairesService();
+
+// Prime acquise (fonction SQL prime_acquise) entre deux dates — base de la
+// rentabilité technique (le CA affiché, lui, = primes émises).
+async function caAcquis(debut: string, fin: string): Promise<number> {
+  const [{ ca }] = await AppDataSource.query(
+    `SELECT ROUND(COALESCE(SUM(montant), 0), 2) AS ca FROM prime_acquise($1::date, $2::date)`,
+    [debut, fin],
+  );
+  return Number(ca);
+}
 
 // Agrège les 6 cartes KPI de la Vue Exécutive en une seule requête,
 // pour un affichage rapide de la page de synthèse DG.
@@ -6,18 +20,8 @@ export class VueExecutiveService {
   async getSynthese(exercice: number) {
     const raw = AppDataSource;
 
-    const [ca] = await raw.query(
-      `SELECT
-         SUM(fp.montant_emis) AS ca_ytd,
-         SUM(fp.montant_encaisse) AS ca_encaisse_ytd,
-         ROUND(SUM(fp.montant_encaisse) / NULLIF(SUM(fp.montant_emis), 0) * 100, 1) AS taux_recouvrement,
-         oa.montant_ca_objectif AS objectif_ca
-       FROM fait_prime fp
-       LEFT JOIN objectif_annuel oa ON oa.exercice = fp.exercice
-       WHERE fp.exercice = $1
-       GROUP BY oa.montant_ca_objectif`,
-      [exercice],
-    );
+    // CA = primes émises de l'exercice, mêmes chiffres que la page Chiffre d'affaires.
+    const ca = await caService.getKpis(exercice);
 
     const [sp] = await raw.query(
       `SELECT
@@ -76,36 +80,40 @@ export class VueExecutiveService {
 
   // Cahier §2.1 : les KPIs "Chiffre d'Affaires YTD", "CA Encaissé & Taux de
   // Recouvrement" et "Rentabilité Technique" affichent tous une "tendance
-  // vs. la même période de l'exercice précédent". "Même période" = mêmes
-  // mois écoulés (ex. YTD Q1 2026 vs YTD Q1 2025), jamais l'exercice N-1
-  // complet — sinon la comparaison favorise artificiellement N-1.
-  private async getPeriode(exercice: number, moisEcoule: number) {
-    const [ca] = await AppDataSource.query(
+  // vs. la même période de l'exercice précédent". "Même période" = du 01/01
+  // à la même date calendaire (ex. 01/01–05/10/2026 vs 01/01–05/10/2025),
+  // jamais l'exercice N-1 complet — sinon la comparaison favorise N-1.
+  //
+  // CA = primes émises de la période (date d'effet), même base que
+  // l'encaissé et le taux de recouvrement. Rentabilité technique = prime
+  // ACQUISE de la période − sinistres (le surplus porte sur le risque
+  // couru, pas sur ce qui a été facturé d'avance).
+  private async getPeriode(exercice: number, dateFin: string) {
+    const primeAcquise = await caAcquis(debutExercice(exercice), dateFin);
+    const [emis] = await AppDataSource.query(
       `SELECT
-         COALESCE(SUM(montant_emis), 0) AS ca,
+         COALESCE(SUM(montant_emis), 0) AS emis,
          COALESCE(SUM(montant_encaisse), 0) AS encaisse
-       FROM fait_prime WHERE exercice = $1 AND mois <= $2`,
-      [exercice, moisEcoule],
+       FROM fait_prime WHERE exercice = $1 AND date <= $2::date`,
+      [exercice, dateFin],
     );
     const [sinistre] = await AppDataSource.query(
       `SELECT COALESCE(SUM(montant_paye), 0) AS sinistres
-       FROM fait_sinistre WHERE exercice = $1 AND mois <= $2`,
-      [exercice, moisEcoule],
+       FROM fait_sinistre WHERE exercice = $1 AND date <= $2::date`,
+      [exercice, dateFin],
     );
 
-    const caTotal = Number(ca.ca);
-    const encaisse = Number(ca.encaisse);
+    const primesEmises = Number(emis.emis);
+    const encaisse = Number(emis.encaisse);
     const sinistres = Number(sinistre.sinistres);
-    // Même formule de prime acquise que mv_sp_portefeuille (§4.1) :
-    // prime émise × (mois écoulés / 12).
-    const primeAcquise = caTotal * (moisEcoule / 12);
     const surplus = primeAcquise - sinistres;
 
     return {
       exercice,
-      ca_ytd: caTotal,
+      date_fin: dateFin,
+      ca_ytd: primesEmises,
       ca_encaisse_ytd: encaisse,
-      taux_recouvrement: caTotal > 0 ? Math.round((encaisse / caTotal) * 1000) / 10 : 0,
+      taux_recouvrement: primesEmises > 0 ? Math.round((encaisse / primesEmises) * 1000) / 10 : 0,
       surplus_technique: surplus,
       taux_rentabilite_pct: primeAcquise > 0 ? Math.round((surplus / primeAcquise) * 1000) / 10 : 0,
     };
@@ -120,23 +128,23 @@ export class VueExecutiveService {
   // N-1 sur les mêmes mois écoulés). Repli sur le linéaire seulement si
   // N-1 n'a aucune donnée sur la période (évite une division par zéro).
   async getProjectionAnnuelle(exercice: number) {
-    const [{ mois_ecoule: moisEcoule }] = await AppDataSource.query(
-      `SELECT COALESCE(MAX(mois), 0) AS mois_ecoule FROM fait_prime WHERE exercice = $1`,
-      [exercice],
-    );
+    const moisEcoule = moisEcouleExercice(exercice);
+    const arrete = dateArrete(exercice);
 
-    const [{ ca: caYtdActuel }] = await AppDataSource.query(
-      `SELECT COALESCE(SUM(montant_emis), 0) AS ca FROM fait_prime WHERE exercice = $1 AND mois <= $2`,
-      [exercice, moisEcoule],
-    );
-    const [{ ca: caYtdN1MemePeriode }] = await AppDataSource.query(
-      `SELECT COALESCE(SUM(montant_emis), 0) AS ca FROM fait_prime WHERE exercice = $1 AND mois <= $2`,
-      [exercice - 1, moisEcoule],
-    );
-    const [{ ca: caTotalN1 }] = await AppDataSource.query(
-      `SELECT COALESCE(SUM(montant_emis), 0) AS ca FROM fait_prime WHERE exercice = $1`,
-      [exercice - 1],
-    );
+    // Primes émises (date d'effet) : à date sur N, même période et
+    // exercice complet sur N-1.
+    const emises = async (ex: number, jusquA: string) => {
+      const [{ ca }] = await AppDataSource.query(
+        `SELECT COALESCE(SUM(montant_emis), 0) AS ca FROM fait_prime WHERE exercice = $1 AND date <= $2::date`,
+        [ex, jusquA],
+      );
+      return Number(ca);
+    };
+    const [caYtdActuel, caYtdN1MemePeriode, caTotalN1] = await Promise.all([
+      emises(exercice, arrete),
+      emises(exercice - 1, memeDateAnneePrecedente(arrete)),
+      emises(exercice - 1, finExercice(exercice - 1)),
+    ]);
     const [{ montant_ca_objectif: objectifCa }] = await AppDataSource.query(
       `SELECT montant_ca_objectif FROM objectif_annuel WHERE exercice = $1`,
       [exercice],
@@ -162,6 +170,7 @@ export class VueExecutiveService {
 
     return {
       moisEcoule,
+      dateArrete: arrete,
       projectionCa: projection,
       objectifCa: objectif,
       ratioObjectifPct: ratioObjectif !== null ? Math.round(ratioObjectif * 1000) / 10 : null,
@@ -199,14 +208,12 @@ export class VueExecutiveService {
   }
 
   async getTendanceN1(exercice: number) {
-    const [{ mois_ecoule: moisEcoule }] = await AppDataSource.query(
-      `SELECT COALESCE(MAX(mois), 0) AS mois_ecoule FROM fait_prime WHERE exercice = $1`,
-      [exercice],
-    );
+    const moisEcoule = moisEcouleExercice(exercice);
+    const arrete = dateArrete(exercice);
 
     const [actuel, precedent] = await Promise.all([
-      this.getPeriode(exercice, moisEcoule),
-      this.getPeriode(exercice - 1, moisEcoule),
+      this.getPeriode(exercice, arrete),
+      this.getPeriode(exercice - 1, memeDateAnneePrecedente(arrete)),
     ]);
 
     const evolutionPct = (valeurActuelle: number, valeurPrecedente: number) => (
@@ -215,6 +222,7 @@ export class VueExecutiveService {
 
     return {
       moisEcoule,
+      dateArrete: arrete,
       actuel,
       precedent,
       evolution: {

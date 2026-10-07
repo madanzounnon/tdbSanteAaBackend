@@ -39,6 +39,7 @@ export async function loadPrimes(sources: PrimeSource[]): Promise<number> {
     }
     fait.typeAvenant = getTypeAvenantByCode(source.code_type_avenant);
     fait.dateAvenant = source.date_avenant;
+    fait.dateEcheance = source.date_echeance;
     fait.montantEmis = Number(source.montant_emis);
     fait.primeNette = Number(source.prime_nette);
     fait.accessoire = Number(source.accessoire);
