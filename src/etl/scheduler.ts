@@ -6,6 +6,7 @@ import { runMonthlyJob } from './jobs/monthly.job';
 import { runQuarterlyJob } from './jobs/quarterly.job';
 import { runLbcJob } from './jobs/lbc.job';
 import { runEncaissementsJob } from './jobs/encaissements.job';
+import { runNotificationsJob } from './jobs/notifications.job';
 
 // Process persistant unique qui planifie les 3 fréquences du §8.1.
 // Alternative possible : ne pas garder ce process en vie et laisser
@@ -35,12 +36,18 @@ async function main() {
   });
 
   // Quotidien à 2h30 — transactions toutes branches pour la détection
-  // anti-blanchiment (module LBC/FT).
+  // anti-blanchiment (module LBC/FT), puis alertes email / SMS (nouveaux
+  // cas LBC, règlements de sinistres importants) sur les données à jour.
   cron.schedule('30 2 * * *', async () => {
     try {
       await runLbcJob();
     } catch (err) {
       console.error('[ETL] Échec job LBC', err);
+    }
+    try {
+      await runNotificationsJob();
+    } catch (err) {
+      console.error('[ETL] Échec des alertes', err);
     }
   });
 

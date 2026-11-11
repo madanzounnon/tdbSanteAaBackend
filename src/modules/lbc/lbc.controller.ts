@@ -7,10 +7,13 @@ import * as editions from './editions.service';
 import { genererPdfDeclaration } from './declaration-pdf';
 import { CRITERES, INDICES_CENTIF, SIGNAUX, STATUTS_DOSSIER, STATUTS_OPERATION, STATUTS_TRANSMISSION, TYPES_CLIENT } from './catalogue';
 import { runLbcJob } from '../../etl/jobs/lbc.job';
+import { runNotificationsJob } from '../../etl/jobs/notifications.job';
+import { nomComplet } from '../auth/auth.service';
 
-// Auteur de l'action, transmis par le frontend (en-tête X-Utilisateur,
-// encodé URI pour les accents) — tracé dans l'historique des déclarations.
+// Auteur de l'action tracé dans l'historique des déclarations : l'utilisateur
+// connecté (session). L'en-tête X-Utilisateur ne sert plus que de repli.
 const utilisateur = (req: Request): string | null => {
+  if (req.utilisateur) return nomComplet(req.utilisateur).slice(0, 120);
   const brut = req.header('x-utilisateur');
   if (!brut) return null;
   try {
@@ -129,7 +132,9 @@ export const synchroniserOperations = traiter(async (_req, res) => {
     return;
   }
   chargementEnCours = true;
+  // Nouvelles opérations chargées -> alertes email / SMS éventuelles.
   runLbcJob()
+    .then(() => runNotificationsJob())
     .catch((err) => console.error('[LBC] Échec du chargement à la demande', err))
     .finally(() => {
       chargementEnCours = false;
