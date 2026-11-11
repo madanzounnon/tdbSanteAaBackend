@@ -204,7 +204,7 @@ const lignesMaj = (resultat: any): any[] => (Array.isArray(resultat?.[0]) ? resu
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Vérifie le code d'un défi ; renvoie l'utilisateur et marque le code utilisé.
-const consommerOtp = async (defi: unknown, code: unknown, objet: ObjetOtp): Promise<LigneUtilisateur> => {
+const consommerOtp = async (defi: unknown, code: unknown, objet: ObjetOtp, ip?: string): Promise<LigneUtilisateur> => {
   if (typeof code !== 'string' || !/^\d{6}$/.test(code.trim())) {
     throw new ErreurAuth('Le code doit contenir exactement 6 chiffres.');
   }
@@ -223,6 +223,8 @@ const consommerOtp = async (defi: unknown, code: unknown, objet: ObjetOtp): Prom
       await AppDataSource.query(`UPDATE auth_otp SET tentatives = tentatives + 1 WHERE id = $1 RETURNING tentatives`, [otp.id]),
     );
     const restantes = OTP_TENTATIVES_MAX - tentatives;
+    // Journal : code erroné, et code invalidé une fois les tentatives épuisées.
+    journaliser(restantes > 0 ? 'ECHEC_CODE' : 'CODE_TENTATIVES_EPUISEES', ip, otp.utilisateur_id);
     throw new ErreurAuth(
       restantes > 0
         ? `Code incorrect. ${restantes} tentative${restantes > 1 ? 's' : ''} restante${restantes > 1 ? 's' : ''}.`
@@ -256,19 +258,24 @@ export const connexion = async (email: unknown, motDePasse: unknown, ip?: string
     throw refus;
   }
   if (u.verrouille_jusqu_au && new Date(u.verrouille_jusqu_au) > new Date()) {
+    journaliser('REFUS_COMPTE_VERROUILLE', ip, u.id, u.email);
     const minutes = Math.ceil((new Date(u.verrouille_jusqu_au).getTime() - Date.now()) / 60000);
     throw new ErreurAuth(`Compte temporairement verrouillé après plusieurs échecs. Réessayez dans ${minutes} min.`, 423);
   }
   if (!(await bcrypt.compare(motDePasse, u.mot_de_passe_hash))) {
-    await AppDataSource.query(
-      `UPDATE utilisateur
-          SET echecs_connexion = echecs_connexion + 1,
-              verrouille_jusqu_au = CASE WHEN echecs_connexion + 1 >= $2
-                                         THEN now() + make_interval(mins => $3) END
-        WHERE id = $1`,
-      [u.id, ECHECS_AVANT_VERROUILLAGE, VERROUILLAGE_MINUTES],
+    const [maj] = lignesMaj(
+      await AppDataSource.query(
+        `UPDATE utilisateur
+            SET echecs_connexion = echecs_connexion + 1,
+                verrouille_jusqu_au = CASE WHEN echecs_connexion + 1 >= $2
+                                           THEN now() + make_interval(mins => $3) END
+          WHERE id = $1
+        RETURNING verrouille_jusqu_au`,
+        [u.id, ECHECS_AVANT_VERROUILLAGE, VERROUILLAGE_MINUTES],
+      ),
     );
     journaliser('ECHEC_MOT_DE_PASSE', ip, u.id, u.email);
+    if (maj?.verrouille_jusqu_au) journaliser('COMPTE_VERROUILLE', ip, u.id, u.email);
     throw refus;
   }
   if (!u.actif) {
@@ -282,7 +289,7 @@ export const connexion = async (email: unknown, motDePasse: unknown, ip?: string
 };
 
 export const verifierOtpConnexion = async (defi: unknown, code: unknown, ip?: string) => {
-  const u = await consommerOtp(defi, code, 'CONNEXION');
+  const u = await consommerOtp(defi, code, 'CONNEXION', ip);
   await AppDataSource.query(`UPDATE utilisateur SET derniere_connexion = now() WHERE id = $1`, [u.id]);
   journaliser('CONNEXION', ip, u.id, u.email);
   return { jeton: signer(u, 'session', DUREE_SESSION), utilisateur: await versPublic(u) };
@@ -333,7 +340,7 @@ export const motDePasseOublie = async (email: unknown, ip?: string) => {
 
 export const reinitialiserMotDePasse = async (defi: unknown, code: unknown, nouveau: unknown, ip?: string) => {
   const mdp = verifierRegleMotDePasse(nouveau);
-  const u = await consommerOtp(defi, code, 'REINITIALISATION');
+  const u = await consommerOtp(defi, code, 'REINITIALISATION', ip);
   await AppDataSource.query(
     `UPDATE utilisateur
         SET mot_de_passe_hash = $2, doit_changer_mot_de_passe = FALSE, echecs_connexion = 0,
